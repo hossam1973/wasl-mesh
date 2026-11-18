@@ -1,0 +1,168 @@
+<title>جاهزية وَصْل للاختبار الميداني</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: field-readiness report. Verdict first, then fixed findings, open risks, and a staged test plan with pass criteria. */
+:root{
+  --bg:#f3f5f4; --surface:#ffffff; --surface-2:#e7ecea; --line:#cdd6d2;
+  --fg:#15211e; --muted:#58675f; --accent:#0f7d6b;
+  --crit:#c3302a; --high:#c26a00; --med:#8a7a00; --ok:#2d8a3e;
+  --font-display:"Readex Pro","IBM Plex Sans Arabic",system-ui,sans-serif;
+  --font-body:"IBM Plex Sans Arabic",system-ui,"Segoe UI",Tahoma,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1614; --surface:#141f1c; --surface-2:#1b2925; --line:#28392f;
+  --fg:#e3ece8; --muted:#92a69e; --accent:#33c3a6; --crit:#ff6359; --high:#f0a03a; --med:#d8c74a; --ok:#5ccf6d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1614; --surface:#141f1c; --surface-2:#1b2925; --line:#28392f;
+  --fg:#e3ece8; --muted:#92a69e; --accent:#33c3a6; --crit:#ff6359; --high:#f0a03a; --med:#d8c74a; --ok:#5ccf6d; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:16px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 56px}
+main{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:34px}
+h1,h2,h3{font-family:var(--font-display);text-wrap:balance;margin:0;line-height:1.3}
+h1{font-size:1.9rem} h2{font-size:1.3rem;padding-bottom:8px;border-bottom:1px solid var(--line)} h3{font-size:1rem}
+p{margin:0;max-width:68ch}
+.mono,code{font-family:var(--font-mono);direction:ltr;unicode-bidi:isolate;font-size:.86em}
+section{display:flex;flex-direction:column;gap:14px}
+.lede{color:var(--muted);font-size:1.05rem}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:.85rem}
+.verdict{background:var(--surface);border:1px solid var(--line);border-inline-start:4px solid var(--accent);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.num{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.num b{display:block;font-family:var(--font-mono);font-size:1.5rem;font-variant-numeric:tabular-nums}
+.num span{color:var(--muted);font-size:.8rem}
+.tbl{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:.88rem}
+th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:start;vertical-align:top}
+tr:last-child td{border-bottom:0}
+th{color:var(--muted);font-weight:600;font-size:.78rem;background:var(--surface-2)}
+.sev{display:inline-block;font-size:.72rem;font-weight:700;border:1px solid currentColor;border-radius:999px;padding:0 8px;white-space:nowrap}
+.crit{color:var(--crit)} .high{color:var(--high)} .med{color:var(--med)} .okc{color:var(--ok)}
+.risk{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.risk header{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.risk .act{color:var(--muted);font-size:.92rem}
+.stage{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:grid;grid-template-columns:44px minmax(0,1fr);gap:4px 14px}
+.stage .n{grid-row:span 4;font-family:var(--font-display);font-size:1.6rem;color:var(--accent);line-height:1.1}
+.stage ul{margin:0;padding-inline-start:20px;display:flex;flex-direction:column;gap:3px;font-size:.93rem}
+.stage .pass{font-size:.88rem;color:var(--muted)}
+.stage .pass b{color:var(--ok)}
+.kit{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.kit div{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:.9rem}
+.kit b{display:block;margin-bottom:2px}
+</style>
+
+<main>
+  <header style="display:flex;flex-direction:column;gap:10px">
+    <h1>جاهزية وَصْل للاختبار الميداني</h1>
+    <p class="lede">مراجعة شاملة للمنصة وتطبيقي Android و iOS قبل التجربة على الأجهزة الحقيقية: ما وُجد وأُصلح، وما يبقى من مخاطر، وخطة اختبار مرحلية بمعايير نجاح واضحة.</p>
+    <div class="meta"><span>المستودع: <span class="mono">hossam1973/wasl-mesh</span></span><span>18 نوفمبر 2026</span><span>نطاق المراجعة: الأمان، صحة البروتوكول، الكود الأصلي، الامتثال لأنظمة الراديو، الجاهزية التشغيلية</span></div>
+  </header>
+
+  <section>
+    <h2>الخلاصة</h2>
+    <div class="verdict">
+      <p><b>جاهز للاختبار الميداني المرحلي، بعد إصلاح ثغرة أمنية حرجة اكتُشفت في هذه المراجعة.</b> الثغرة كانت تسمح لجهاز خبيث في الشبكة بتشغيل كود داخل تطبيق الضحية وسرقة مفاتيحه ومحادثاته، وأثبتناها باختبار هجوم فعلي ثم أغلقناها بطبقتين.</p>
+      <p>يبقى قيد تشغيلي مهم يجب أن يعرفه فريق الاختبار: <b>التطبيق لا يمرّر الرسائل وهو في الخلفية أو والشاشة مقفلة</b>. يجب إبقاؤه مفتوحاً أثناء التجارب.</p>
+    </div>
+    <div class="nums">
+      <div class="num"><b>13</b><span>مشكلة وُجدت وأُصلحت</span></div>
+      <div class="num"><b>1</b><span>حرجة (XSS) — مُثبتة ومُغلقة</span></div>
+      <div class="num"><b>8</b><span>حزم اختبار آلية تنجح</span></div>
+      <div class="num"><b>8</b><span>مخاطر مفتوحة موثّقة</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>ما وُجد وأُصلح</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>الخطورة</th><th>المشكلة</th><th>الإصلاح</th><th>التحقق</th></tr></thead>
+      <tbody>
+        <tr><td><span class="sev crit">حرجة</span></td><td>قيم من بطاقة جهاز آخر (البطارية، عدد التمرير، بصمة السجل، حد التواقيع) تُكتب في الصفحة دون تعقيم. جهاز خبيث يستطيع تشغيل كود في تطبيق الضحية من مسافة قفزتين.</td><td>تحقق صارم من كل حقل قادم من الشبكة، وسياسة أمان المحتوى (CSP) تمنع تنفيذ أي معالج أحداث مُحقن.</td><td>اختبار الهجوم نجح قبل الإصلاح وفشل بعده؛ اختبار CSP مستقل</td></tr>
+        <tr><td><span class="sev high">عالية</span></td><td>الرسائل المعلّقة (بانتظار طريق) تُحفظ في الذاكرة فقط وتضيع إن أغلق النظام التطبيق، وهذا شائع على الهواتف.</td><td>حفظ صندوق الصادر في قاعدة بيانات الجهاز واستعادته عند التشغيل.</td><td>رسالة بقيت بعد إعادة التحميل</td></tr>
+        <tr><td><span class="sev high">عالية</span></td><td>جهاز واحد يستطيع إغراق الشبكة بنداءات SOS أو عقود، فيستهلك قناة LoRa أو HF بالكامل.</td><td>حد معدل لكل جهاز لكل نوع بث عام (مثلاً 6 نداءات SOS في الدقيقة)، والزائد لا يُمرَّر.</td><td>40 نداء من جهاز واحد: قُبل 6 فقط</td></tr>
+        <tr><td><span class="sev high">عالية</span></td><td>عقد بتوقيع صحيح لكن ببنية فاسدة يعطّل مركز القيادة بشكل دائم.</td><td>تحقق من بنية العقود والمؤقّتات والإيصالات قبل قبولها.</td><td>عقد فاسد رُفض ومركز القيادة يعمل</td></tr>
+        <tr><td><span class="sev high">عالية</span></td><td>معرّفات مصنوعة مثل <code>__proto__</code> تلوّث كائنات JavaScript الأساسية.</td><td>قبول المعرّفات بصيغتها الصحيحة فقط.</td><td>اختبار آلي</td></tr>
+        <tr><td><span class="sev high">عالية</span></td><td>عند لقاء جهاز جديد يُسلَّم له كل المخزون دفعة واحدة (قد يصل إلى عشرات الميغابايت عبر البلوتوث).</td><td>أولوية (الهويات ثم الطوارئ ثم الرسائل القصيرة ثم أجزاء الملفات) وحد حجم لكل لقاء.</td><td>اختبارات التمرير</td></tr>
+        <tr><td><span class="sev high">عالية</span></td><td>المودم الصوتي المدمج يضع نداء الهواة داخل بيانات مضغوطة، فلا يقرؤه أحد كما تشترط أنظمة الهواة.</td><td>كل إطار على HF/VHF يحمل الآن ترويسة AX.25 القياسية بالنداء نصاً واضحاً.</td><td>اختبار AX.25 واختبار السلسلة الكاملة</td></tr>
+        <tr><td><span class="sev high">عالية</span></td><td>تمرير رسائل أجهزة غير مرخّصة (مثلاً قادمة عبر LoRa) على موجات الهواة يُعدّ حركة طرف ثالث مقيدة دولياً.</td><td>على HF/VHF: تُبث حركتك أنت فقط، ونداءات الطوارئ من الجميع.</td><td>اختبار السلسلة WiFi→LoRa→HF</td></tr>
+        <tr><td><span class="sev med">متوسطة</span></td><td>بصمة الهوية 48 بت يمكن مطابقتها بجهد حوسبي كبير لكنه ممكن.</td><td>64 بت (<span class="mono">XXXX-XXXX-XXXX-XXXX</span>).</td><td>كل الاختبارات</td></tr>
+        <tr><td><span class="sev med">متوسطة</span></td><td>أجزاء الملفات المشفّرة تقارب 30KB، قريبة من حد Nearby Connections البالغ 32KB.</td><td>أجزاء 12KB بهامش أمان واسع.</td><td>نقل صورة 300KB عبر الرابط الأصلي</td></tr>
+        <tr><td><span class="sev med">متوسطة</span></td><td>أول محاولة اتصال بلوتوث تفشل كثيراً، ولا توجد إعادة محاولة، فيبقى جهازان متجاوران غير متصلين.</td><td>إعادة محاولة بتباعد متزايد (Android و iOS) طالما الجهاز في المدى.</td><td>بناء ناجح؛ يحتاج تأكيداً على الأجهزة</td></tr>
+        <tr><td><span class="sev med">متوسطة</span></td><td>في شبكة IP، الجهاز الذي يغادر ثم يعود لا يُعاد الاتصال به حتى إعادة تشغيل التطبيق.</td><td>مسح حالة الاتصال عند الفقد.</td><td>بناء ناجح؛ يحتاج تأكيداً على الشبكة</td></tr>
+        <tr><td><span class="sev med">متوسطة</span></td><td>حد زمن البث في LoRa ثابت على 10% (أوروبا)، بينما يختلف حسب الحزمة والبلد.</td><td>اختيار المنطقة: 10%، أو 1%، أو بلا حد.</td><td>واجهة الطبقات</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>مخاطر مفتوحة يجب معرفتها</h2>
+    <div class="risk"><header><span class="sev crit">تشغيلية</span><h3>لا تمرير في الخلفية</h3></header>
+      <p>Android يوقف نشاط التطبيق عند قفل الشاشة، و iOS يعلّقه فوراً في الخلفية. الهاتف لا يعمل كحلقة وصل إلا والتطبيق مفتوح.</p>
+      <p class="act">العلاج: خدمة أمامية (Foreground Service) على Android تُبقي التمرير يعمل مع إشعار دائم. على iOS لا يوجد حل كامل بسبب قيود Apple، لذلك تُستخدم أجهزة Android أو LoRa كحلقات وصل ثابتة.</p></div>
+    <div class="risk"><header><span class="sev high">تحقق أولاً</span><h3>التشفير في تطبيق iOS</h3></header>
+      <p>تطبيق iOS يعمل داخل عنوان <span class="mono">capacitor://localhost</span>. المتوقع أن واجهة التشفير متاحة فيه، لكن لم يُتحقق من ذلك على جهاز. إن لم تكن متاحة تظهر رسالة واضحة بدل أن يعمل التطبيق بلا تشفير.</p>
+      <p class="act">أول خطوة في اختبار iPhone: افتح التطبيق وتأكد أن شاشة الترحيب وطلب الاسم تظهر.</p></div>
+    <div class="risk"><header><span class="sev high">أمنية</span><h3>لا سرية أمامية</h3></header>
+      <p>مفتاح التشفير بين شخصين ثابت. إن سُرق هاتف أحدهما لاحقاً، يمكن فك الرسائل القديمة التي التقطها وسيط وخزّنها.</p>
+      <p class="act">العلاج: بروتوكول تدوير مفاتيح (Double Ratchet) في مرحلة لاحقة.</p></div>
+    <div class="risk"><header><span class="sev med">خصوصية</span><h3>الأجهزة الوسيطة ترى من يراسل من</h3></header>
+      <p>المحتوى مشفّر، لكن معرّف المرسل والمستلم ظاهر للأجهزة الوسيطة. في البيئات العدائية قد يكشف هذا شبكة العلاقات.</p></div>
+    <div class="risk"><header><span class="sev med">أمنية</span><h3>الثقة عند أول لقاء</h3></header>
+      <p>أول مفتاح يُرى لمعرّف ما يُعتمد. يجب مقارنة البصمة وجهاً لوجه (تبويب الشبكة) مع الأشخاص المهمّين.</p></div>
+    <div class="risk"><header><span class="sev med">توسّع</span><h3>لم يُختبر على أكثر من 4 أجهزة</h3></header>
+      <p>كل جهاز يعلن هويته كل 20 ثانية وتنتشر الإعلانات في كل الشبكة. مع مئات الأجهزة سيزدحم البلوتوث. يجب قياس ذلك في الاختبار الميداني.</p></div>
+    <div class="risk"><header><span class="sev med">توافق</span><h3>Android و iPhone لا يتصلان مباشرة بالبلوتوث</h3></header>
+      <p>أنظمة Google و Apple غير متوافقة. يتصلان عبر نقطة اتصال مشتركة ورمز QR، أو عبر LoRa.</p></div>
+    <div class="risk"><header><span class="sev med">عتاد</span><h3>LoRa عبر USB من المتصفح على الحاسوب فقط</h3></header>
+      <p>المنفذ التسلسلي متاح في Chrome و Edge على الحاسوب. ربط جهاز LoRa بهاتف Android عبر USB يحتاج إضافة أصلية لم تُبنَ بعد.</p></div>
+  </section>
+
+  <section>
+    <h2>خطة الاختبار على العتاد</h2>
+    <p>نفّذ المراحل بالترتيب. لا تنتقل لمرحلة قبل نجاح السابقة. سجّل لكل اختبار: الأجهزة وإصدار النظام، المسافة، الزمن، النتيجة، ولقطة شاشة لأي خطأ.</p>
+
+    <div class="stage"><span class="n">0</span><h3>المكتب: هاتفا Android</h3>
+      <ul><li>ثبّت ملف APK من صفحة البناء، وامنح إذن «الأجهزة القريبة».</li><li>أطفئ Wi-Fi والبيانات الخلوية في الهاتفين.</li><li>انتظر الاتصال التلقائي، ثم أرسل رسالة وصورة ونداء SOS.</li></ul>
+      <p class="pass"><b>النجاح:</b> اتصال تلقائي خلال 30 ثانية دون رمز، وصول الرسالة مع ✓✓، والصورة سليمة.</p></div>
+
+    <div class="stage"><span class="n">1</span><h3>iPhone</h3>
+      <ul><li>ثبّت عبر TestFlight (يحتاج حساب Apple Developer).</li><li>تأكد أن التطبيق يفتح ويطلب الاسم (فحص التشفير).</li><li>جهازا iPhone: اتصال تلقائي عبر Multipeer.</li></ul>
+      <p class="pass"><b>النجاح:</b> نفس معايير المرحلة 0 بين جهازي iPhone.</p></div>
+
+    <div class="stage"><span class="n">2</span><h3>المدى والقفزات</h3>
+      <ul><li>3 إلى 5 هواتف Android في خط، بمسافة 40–80 متراً بين كل جهازين، والتطبيق مفتوح.</li><li>أرسل من الطرف الأول إلى الأخير.</li><li>افصل الجهاز الأوسط ثم أعده.</li></ul>
+      <p class="pass"><b>النجاح:</b> الرسالة تصل بعدد قفزات صحيح، والرسائل المعلّقة تُسلَّم بعد عودة الجهاز الأوسط.</p></div>
+
+    <div class="stage"><span class="n">3</span><h3>المكالمات</h3>
+      <ul><li>هاتفان على نقطة اتصال بلا إنترنت، رمز QR، ثم مكالمة صوت ثم فيديو لمدة 5 دقائق.</li><li>Android مع iPhone بنفس الطريقة.</li></ul>
+      <p class="pass"><b>النجاح:</b> صوت وصورة في الاتجاهين دون انقطاع، وانتهاء المكالمة على الطرفين.</p></div>
+
+    <div class="stage"><span class="n">4</span><h3>شبكة IP ومايكروويف</h3>
+      <ul><li>هاتفان على راوتر Wi-Fi بلا إنترنت: اكتشاف تلقائي.</li><li>موقعان يربطهما جسر 5 GHz أو شبكة AREDN: اكتشاف تلقائي على الجسر، أو اتصال بالعنوان على رابط موجَّه.</li><li>بعدها «اتصال مباشر» ومكالمة فيديو عبر الرابط.</li></ul>
+      <p class="pass"><b>النجاح:</b> اتصال دون رمز، ومكالمة فيديو عبر المايكروويف.</p></div>
+
+    <div class="stage"><span class="n">5</span><h3>LoRa</h3>
+      <ul><li>لوحتا RNode بنفس التردد وعرض النطاق، متصلتان بحاسوبين عبر USB، وتطبيق الويب في Chrome.</li><li>اختر حد زمن البث المطابق لبلدك.</li><li>اختبار المدى: 1 ثم 3 ثم 5 كم في خط نظر.</li></ul>
+      <p class="pass"><b>النجاح:</b> نص و SOS على كل مسافة، وملف 5KB على المسافة القصيرة.</p></div>
+
+    <div class="stage"><span class="n">6</span><h3>HF / VHF</h3>
+      <ul><li>ابدأ على حمل وهمي (Dummy Load) بقدرة منخفضة لضبط مستوى الصوت و VOX.</li><li>VHF FM بين جهازي هواة متقاربين، ثم HF مع مشغّل مرخّص ونداء صحيح.</li><li>جرّب VARA HF أو Direwolf عبر TCP من حاسوب على نفس الشبكة.</li></ul>
+      <p class="pass"><b>النجاح:</b> وصول SOS بالنداء الصحيح، وعدم بث أي رسالة مشفّرة على موجات الهواة.</p></div>
+
+    <div class="stage"><span class="n">7</span><h3>الناقل اليدوي والضغط</h3>
+      <ul><li>صدّر ملفاً من جهاز، انقله بفلاشة، استورده في جهاز معزول، وأعد الإيصالات بالطريقة نفسها.</li><li>10 أجهزة أو أكثر في مكان واحد لمدة ساعة: سجّل استهلاك البطارية وزمن وصول الرسائل.</li></ul>
+      <p class="pass"><b>النجاح:</b> ✓✓ بعد عودة ملف الإيصالات، والبطارية أعلى من 50% بعد ساعة.</p></div>
+  </section>
+
+  <section>
+    <h2>العتاد المطلوب</h2>
+    <div class="kit">
+      <div><b>هواتف</b>5 أجهزة Android (8.0 فأحدث، يفضّل إصدارات مختلفة)، وجهازا iPhone (iOS 14 فأحدث).</div>
+      <div><b>LoRa</b>لوحتا LoRa متوافقتان مع RNode (مثل LilyGO T-Beam أو Heltec) بتردد بلدك، وحاسوبان.</div>
+      <div><b>راديو</b>جهازا هواة VHF، ومحطة HF مع واجهة صوت (Signalink أو ما يماثلها) ومشغّل مرخّص.</div>
+      <div><b>شبكة</b>راوتر Wi-Fi، وجسر مايكروويف 5 GHz نقطة لنقطة أو عقد AREDN.</div>
+    </div>
+  </section>
+</main>
