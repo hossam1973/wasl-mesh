@@ -31,6 +31,28 @@ class KissDecoder {
   }
 }
 
+/* AX.25 UI frames: the standard for amateur packet (Direwolf, VARA, hardware TNCs). Carries the callsign in every frame. */
+function ax25Addr(call, last, cmd) {
+  const [c, ssid = '0'] = String(call || 'NOCALL').toUpperCase().split('-'), out = new Uint8Array(7);
+  const base = c.replace(/[^A-Z0-9]/g, '').slice(0, 6).padEnd(6, ' ');
+  for (let i = 0; i < 6; i++) out[i] = base.charCodeAt(i) << 1;
+  out[6] = (cmd ? 0xE0 : 0x60) | ((parseInt(ssid, 10) & 0x0F) << 1) | (last ? 1 : 0);
+  return out;
+}
+function ax25Call(b) { let c = ''; for (let i = 0; i < 6; i++) c += String.fromCharCode(b[i] >> 1); c = c.trim(); const ssid = (b[6] >> 1) & 0x0F; return ssid ? `${c}-${ssid}` : c; }
+function ax25Encode(dest, src, info) {
+  const f = new Uint8Array(16 + info.length);
+  f.set(ax25Addr(dest, false, true), 0); f.set(ax25Addr(src, true, false), 7); f[14] = 0x03; f[15] = 0xF0; f.set(info, 16);
+  return f;
+}
+function ax25Decode(f) {
+  if (f.length < 16) return null;
+  let i = 0; const calls = [];
+  while (i + 7 <= f.length) { calls.push(ax25Call(f.subarray(i, i + 7))); const last = f[i + 6] & 1; i += 7; if (last) break; if (calls.length > 10) return null; }
+  if (calls.length < 2 || f[i] !== 0x03 || f[i + 1] !== 0xF0) return null;
+  return { dest: calls[0], src: calls[1], info: f.slice(i + 2) };
+}
+
 /* fragmentation */
 const MAGIC = 0x57, VER = 1, HDR = 7;
 function fragment(payload, mtu) {
@@ -67,6 +89,12 @@ class Reassembler {
 }
 
 /* 4-FSK sound-card modem. 2 bits/symbol. Profiles: HF (SSB, 50 baud = 100 bit/s), VHF FM (300 baud = 600 bit/s). */
+/* TCP modem presets (connected through the native app): real throughput is set by the modem */
+const MODEMS = {
+  vara: { kind: 'hf', label: 'VARA HF', port: 8100, bps: 2000, mtu: 200 },
+  ardop: { kind: 'hf', label: 'ARDOP', port: 8515, bps: 800, mtu: 128 },
+  direwolf: { kind: 'vhf', label: 'Direwolf (AX.25 1200)', port: 8001, bps: 1200, mtu: 200 },
+};
 const PROFILES = {
   hf: { tones: [1000, 1400, 1800, 2200], baud: 50 },
   vhf: { tones: [900, 1500, 2100, 2700], baud: 300 },
@@ -128,6 +156,7 @@ const KINDS = {
   lora: { label: 'LoRa', mtu: 200, bps: 1760, encrypt: true, maxPkt: 6000, cardEvery: 120000, duty: 0.1 },
   hf: { label: 'HF', mtu: 64, bps: 100, encrypt: false, maxPkt: 1600, cardEvery: 600000, duty: 1 },
   vhf: { label: 'VHF/UHF', mtu: 128, bps: 600, encrypt: false, maxPkt: 3000, cardEvery: 300000, duty: 1 },
+  air: { label: 'صوت عبر الهواء', mtu: 128, bps: 600, encrypt: true, maxPkt: 3000, cardEvery: 300000, duty: 1 },
 };
 
 /* a radio port: queues fragments, paces to the link's bit rate and duty cycle */
@@ -144,14 +173,19 @@ class Port {
   async pump() {
     if (this.busy) return; this.busy = true;
     try { while (this.queue.length && this.state === 'on') {
-      const f = this.queue.shift(), t0 = Date.now();
+      const raw = this.queue.shift(), t0 = Date.now();
+      const f = this.ax25 ? ax25Encode('WASL', this.callsign || 'NOCALL', raw) : raw;
       await this.txFrame(f);
       this.stats.txFrames++; this.stats.txBytes += f.length;
       const air = Math.max(Date.now() - t0, this.pace ? this.airtime(f.length) : 0); this.stats.txMs += air;
       if (this.duty < 1) await sleep(air * (1 / this.duty - 1));        // legal duty-cycle wait (e.g. 10% on EU 869.5 MHz)
     } } finally { this.busy = false; }
   }
-  rxFrame(f) { this.stats.rxFrames++; this.stats.rxBytes += f.length; if (!this.reasm.push(f)) this.stats.bad++; }
+  rxFrame(f) {
+    this.stats.rxFrames++; this.stats.rxBytes += f.length;
+    if (this.ax25) { const a = ax25Decode(f); if (!a || a.dest !== 'WASL') { this.stats.foreign = (this.stats.foreign || 0) + 1; return; } this.lastCall = a.src; f = a.info; }
+    if (!this.reasm.push(f)) this.stats.bad++;
+  }
   setState(s, msg) { this.state = s; this.onState && this.onState(s, msg); if (s === 'on') this.pump(); }
 }
 
@@ -177,7 +211,7 @@ class SerialKissPort extends Port {
 
 /* sound-card modem: radio speaker -> device mic, device speaker -> radio mic (VOX) */
 class AudioModemPort extends Port {
-  constructor(kind, opts) { super(kind, opts); this.prof = PROFILES[kind === 'vhf' ? 'vhf' : 'hf']; this.bps = this.prof.baud * 2; this.buf = []; this.bufLen = 0; }
+  constructor(kind, opts) { super(kind, opts); this.prof = PROFILES[kind === 'hf' ? 'hf' : 'vhf']; this.bps = this.prof.baud * 2; this.buf = []; this.bufLen = 0; }
   async open() {
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
     this.ctx = new AudioContext(); this.sr = this.ctx.sampleRate;
@@ -207,6 +241,15 @@ class AudioModemPort extends Port {
   async close() { clearInterval(this.timer); this.stream?.getTracks().forEach(t => t.stop()); await this.ctx?.close(); this.setState('off'); }
 }
 
+/* KISS over any byte stream: TCP to VARA / Direwolf / ARDOP through the native app */
+class KissStreamPort extends Port {
+  constructor(kind, opts) { super(kind, opts); this.pace = true; this.dec = new KissDecoder(f => this.rxFrame(f)); this.write = opts.write; this.closeFn = opts.close; }
+  async open() { this.setState('on'); }
+  feed(bytes) { this.dec.push(bytes); }
+  async txFrame(f) { await this.write(kissEncode(f)); await sleep(this.airtime(f.length + 4)); }
+  async close() { try { await this.closeFn?.(); } catch {} this.setState('off'); }
+}
+
 /* virtual port: used by tests and simulators to bridge two devices frame by frame */
 class VirtualPort extends Port {
   constructor(kind, opts) { super(kind, opts); this.pace = true; this.out = null; }
@@ -215,6 +258,6 @@ class VirtualPort extends Port {
   inject(f) { this.rxFrame(f instanceof Uint8Array ? f : Uint8Array.from(f)); }
 }
 
-const api = { crc16, kissEncode, KissDecoder, fragment, Reassembler, modulate, demodulate, PROFILES, KINDS, Port, SerialKissPort, AudioModemPort, VirtualPort };
+const api = { crc16, kissEncode, KissDecoder, ax25Encode, ax25Decode, fragment, Reassembler, modulate, demodulate, PROFILES, KINDS, MODEMS, Port, SerialKissPort, AudioModemPort, KissStreamPort, VirtualPort };
 if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.WaslRadio = api;
 })(typeof window !== 'undefined' ? window : globalThis);

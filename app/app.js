@@ -229,8 +229,8 @@ function flood(pkt, except) {
 
 /* ---------- radio layers (LoRa / HF / VHF): what each may carry ---------- */
 const radios = new Map();                 // kind -> WaslRadio port
-const VIA = { ip: 'Wi-Fi / IP', lora: 'LoRa', hf: 'HF', vhf: 'VHF' };
-const NARROW = { ip: 0, lora: 1, vhf: 2, hf: 3 };
+const VIA = { ip: 'Wi-Fi / IP', lora: 'LoRa', hf: 'HF', vhf: 'VHF', air: 'الصوت عبر الهواء', manual: 'ناقل يدوي' };
+const NARROW = { ip: 0, lora: 1, air: 2, vhf: 2, hf: 3, manual: 4 };
 const narrowest = (a = 'ip', b = 'ip') => (NARROW[a] ?? 0) >= (NARROW[b] ?? 0) ? a : b;   // slowest layer along a path
 function radioPolicy(port, pkt, size) {
   if (!port.encrypt && pkt.type === 'sec') return 'التشفير ممنوع على موجات الهواة';
@@ -261,9 +261,10 @@ function attachRadio(port) {
   renderSoon(); return port;
 }
 async function connectRadio(kind, how) {
-  if (kind !== 'lora' && !ME.callsign) { toast('أدخل نداء الهواة (Callsign) أولاً، فهو إلزامي قانونياً على HF/VHF'); return; }
+  if ((kind === 'hf' || kind === 'vhf') && !ME.callsign) { toast('أدخل نداء الهواة (Callsign) أولاً، فهو إلزامي قانونياً على HF/VHF'); return; }
   const R = window.WaslRadio;
   const port = how === 'audio' ? new R.AudioModemPort(kind) : new R.SerialKissPort(kind);
+  if (how !== 'audio' && (kind === 'hf' || kind === 'vhf')) { port.ax25 = true; port.callsign = ME.callsign; }   // AX.25 frames for hardware TNCs
   attachRadio(port);
   try { await port.open(kind === 'lora' ? 115200 : 9600); toast(`${VIA[kind]}: متصل`); }
   catch (e) { radios.delete(kind); toast(`${VIA[kind]}: ${e.message || 'تعذّر الاتصال'}`); }
@@ -288,7 +289,8 @@ async function handlePacket(pkt, from) {
     if (flood(fwd, from)) stats.relayed++;
   }
 }
-function pruneDtn() { const cut = Date.now() - 3600000; for (const [k, v] of dtn) if (v.ts < cut || dtn.size > 400) dtn.delete(k); }
+function pruneDtn() { const cut = Date.now() - 3600000; for (const [k, v] of dtn) if (v.ts < cut || dtn.size > 400) dtn.delete(k);
+  const cut2 = Date.now() - 86400000; for (const [k, v] of outbox) if ((v.ts || 0) < cut2) outbox.delete(k); }
 function flushTo(link) {  // store-and-forward: hand known identities and pending packets to a newly met device
   for (const [id, pkt] of Object.entries(cardPkts)) if (id !== link.id) rawSend(link, { t: 'pkt', p: pkt });
   for (const { pkt } of gossip.values()) rawSend(link, { t: 'pkt', p: pkt });   // broadcasts, decisions, timers reach late joiners
@@ -314,7 +316,7 @@ async function sendSecure(dst, obj, ref) {
   const sig = await sign(pid + '|' + dst + '|' + ivs + '|' + ct);
   const pkt = { pid, src: ME.id, dst, ttl: TTL, h: 0, type: 'sec', body: { iv: ivs, ct, sig }, ts: Date.now() };
   markSeen(pid);
-  if (ref) outbox.set(pid, { pkt, ref });
+  if (ref) outbox.set(pid, { pkt, ref, ts: Date.now() });
   const n = flood(pkt); stats.sent++;
   return { pid, n, ct };
 }
@@ -341,7 +343,7 @@ async function onSecure(pkt, hops) {
     case 'sig': onMeshSignal(from, m); break;
   }
 }
-function ack(to, ref) { sendSecure(to, { k: 'ack', ref }).catch(() => {}); }
+function ack(to, ref) { sendSecure(to, { k: 'ack', ref }, 'ack-' + ref).catch(() => {}); }
 async function tryAssemble(from, id) {
   const f = incoming[id]; if (!f || !f.meta) return;
   const msg = findMsg(from, id); if (!msg) return;
@@ -892,6 +894,7 @@ function openChat(id) {
 }
 function layersHtml() {
   const lora = radios.get('lora'), hf = radios.get('hf') || radios.get('vhf');
+  const ipLinks = [...NATIVE.links.keys()].filter(k => k.startsWith('ip:')).length;
   const caps = c => c.map(x => `<span class="cap">${x}</span>`).join('');
   const st = (cls, t) => `<span class="pill ${cls}">${t}</span>`;
   const portInfo = p => p ? `<small class="hint">أُرسل ${p.stats.txFrames} إطاراً · استُقبل ${p.stats.rxFrames}${p.stats.bad ? ` · ${p.stats.bad} تالف` : ''}${p.lastCall ? ` · آخر محطة: ${esc(p.lastCall)}` : ''}${p.queue.length ? ` · ${p.queue.length} بانتظار البث` : ''}</small>` : '';
@@ -903,7 +906,11 @@ function layersHtml() {
       NATIVE.on ? (NATIVE.platform === 'ios' ? 'Wi-Fi نظير لنظير بلا نقطة اتصال للرسائل والملفات. للمكالمات: نقطة اتصال مشتركة.' : 'Wi-Fi Direct بلا نقطة اتصال للرسائل والملفات. للمكالمات: نقطة اتصال مشتركة ورمز QR.')
         : 'شغّل نقطة اتصال من أي هاتف واربط الأجهزة برمز QR. Wi-Fi Direct بلا نقطة اتصال في تطبيق الهاتف.'],
     ['شبكة P2P (نمط libp2p)', 'كل الطبقات', ['توجيه', 'هوية'], st('ok', 'نشطة'), 'هوية من المفتاح العام، بث Gossip مع منع التكرار، تخزين ثم تمرير. التوافق المباشر مع libp2p في النسخة الأصلية.'],
-    ['مايكروويف نقطة لنقطة', 'حتى 50 كم', ['فيديو', 'صوت', 'ملفات', 'نص'], st('mesh', 'عبر IP'), 'أي رابط IP بين المواقع (مثل أجهزة 5 GHz) يحمل WebRTC كاملاً. اربط جهازاً في كل موقع بنفس الشبكة ثم «اتصال مباشر».'],
+    ['مايكروويف / شبكة IP (AREDN)', 'حتى 50 كم لكل قفزة', ['فيديو', 'صوت', 'ملفات', 'نص'], NATIVE.ip ? st('ok', `${ipLinks} روابط · منفذ ${NATIVE.ip.port}`) : st('mesh', 'عبر IP'),
+      NATIVE.ip ? `الأجهزة على نفس الشبكة (Wi-Fi بلا إنترنت، جسر مايكروويف، شبكة AREDN) تتصل تلقائياً. لموقع بعيد عبر رابط موجَّه اكتب عنوانه:
+        <small class="hint">عنوان هذا الجهاز: <b class="mono">${(NATIVE.ip.addresses || []).map(a => esc(a + ':' + NATIVE.ip.port)).join('، ') || '—'}</b></small>
+        <div class="row"><input type="text" id="ipHost" class="mono" placeholder="10.0.0.5:40123" value="${esc(FORM.ipHost)}"><button class="btn" data-radio="ipconnect">اتصل بالموقع</button></div>`
+        : 'أي رابط IP بين المواقع (أجهزة 5 GHz نقطة لنقطة، شبكة AREDN) يحمل WebRTC كاملاً. في تطبيق الهاتف تتصل الأجهزة على الشبكة تلقائياً.'],
     ['WebRTC', 'فوق أي IP', ['فيديو', 'صوت', 'ملفات', 'نص'], links.size ? st('ok', `${links.size} نشطة`) : st('mesh', 'جاهزة'), 'مكالمات مشفّرة DTLS-SRTP ونقل ملفات مباشر بين جهازين.'],
     ['LoRa', 'حتى 15 كم بلا رخصة', ['نص', 'SOS', 'ملفات حتى 12KB'], lora?.state === 'on' ? st('ok', 'متصل') : st('off', 'غير متصل'),
       `جهاز LoRa بنظام RNode أو أي TNC يدعم KISS عبر USB. نحو 1.7 كيلوبت/ث، مشفّر، مع احترام حد زمن البث. ${portInfo(lora)}
@@ -912,7 +919,17 @@ function layersHtml() {
       `عبر كرت الصوت مع أي جهاز راديو (VOX) أو TNC عبر USB. 100 بت/ث على HF و600 على VHF. الرسائل موقّعة لكن غير مشفّرة، كما يشترط القانون. ${portInfo(hf)}
        <label class="hint" for="callIn">نداء الهواة (Callsign)</label><input type="text" id="callIn" value="${esc(ME.callsign || '')}" maxlength="10" placeholder="مثلاً HZ1ABC" class="mono">
        <div class="row"><select id="hfBand"><option value="hf">HF · 50 baud</option><option value="vhf">VHF/UHF FM · 300 baud</option></select>
-       <button class="btn" data-radio="hf:audio">وصل عبر كرت الصوت</button><button class="btn" data-radio="hf:serial">وصل TNC (USB)</button></div>`],
+       <button class="btn" data-radio="hf:audio">وصل عبر كرت الصوت</button><button class="btn" data-radio="hf:serial">وصل TNC (USB)</button></div>
+       ${NATIVE.plugin ? `<span class="hint">أو مودم احترافي على حاسوب في الشبكة (حزم AX.25 تحمل نداءك):</span>
+       <div class="row"><select id="modemKind">${Object.entries(WaslRadio.MODEMS).map(([k, m]) => `<option value="${k}" ${FORM.modemKind === k ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
+       <input type="text" id="modemHost" class="mono" placeholder="192.168.1.20" value="${esc(FORM.modemHost)}"><input type="text" id="modemPort" class="mono" placeholder="${WaslRadio.MODEMS[FORM.modemKind].port}" value="${esc(FORM.modemPort)}" style="width:80px">
+       <button class="btn" data-radio="modem">اتصل بالمودم</button></div>` : ''}`],
+    ['الصوت عبر الهواء', 'حتى 5 م', ['نص', 'SOS'], radios.get('air')?.state === 'on' ? st('ok', 'يستمع') : st('off', 'متوقف'),
+      `بلا أي شبكة: الهاتف يبث البيانات نغمات من السماعة والآخر يلتقطها بالميكروفون. للحالات القصوى وعبر الجدران الرقيقة. ${portInfo(radios.get('air'))}
+       <div class="row"><button class="btn" data-radio="air:audio">${radios.get('air')?.state === 'on' ? 'إعادة التشغيل' : 'تشغيل'}</button></div>`],
+    ['ناقل يدوي (ملف)', 'أي مسافة', ['نص', 'SOS', 'ملفات', 'قرارات'], st(outbox.size + dtn.size ? 'mesh' : 'off', `${outbox.size + dtn.size} بانتظار النقل`),
+      `حين لا يوجد أي اتصال: صدّر الرسائل المعلّقة إلى ملف، وانقله بفلاشة أو بطاقة ذاكرة أو مع شخص مسافر، ثم استورده في الجهة الأخرى. الرسائل الخاصة تبقى مشفّرة داخل الملف.
+       <div class="row"><button class="btn" data-radio="export">تصدير ملف</button><button class="btn" data-radio="import">استيراد ملف</button></div>`],
   ];
   return rows.map(([n, range, c, s, desc]) => `<div class="layer"><div class="top"><b>${n}</b>${s}</div><small class="hint">${range}</small><div>${caps(c)}</div><div class="desc">${desc}</div></div>`).join('');
 }
@@ -926,7 +943,7 @@ function renderNet() {
       <div class="stat"><b>${outbox.size + dtn.size}</b><span>حزم محفوظة للتمرير لاحقاً</span></div>
     </div>
     <p class="hint">كل جهاز في القائمة يمرّر الرسائل للأجهزة الأبعد. الأجهزة «عبر الشبكة» تصلها رسائلك وملفاتك، والمكالمات تحتاج رابطاً مباشراً.</p>
-    <h3>طبقات الاتصال السبع</h3>
+    <h3>طبقات الاتصال</h3>
     <div class="layers">${layersHtml()}</div>
     <h3>الأجهزة المعروفة</h3>
     ${nodes.map(n => { const r = reachOf(n.id); return `<div class="node"><span><i class="dot ${r.cls}"></i> <b>${esc(n.name || 'بدون اسم')}</b><br><small class="mono">${n.id}</small></span><small>${esc(r.text)}</small></div>`; }).join('') || '<p class="empty">لا توجد أجهزة بعد</p>'}
@@ -951,7 +968,8 @@ async function renderChain() {
  * In the Android / iOS app, nearby phones find each other and link automatically over
  * Bluetooth LE + Wi-Fi Direct (Android) or Bluetooth + peer-to-peer Wi-Fi (iOS). No hotspot, no QR.
  * These links carry the same signed, end-to-end encrypted mesh packets as WebRTC links. */
-const NATIVE = { on: false, links: new Map(), plugin: null, platform: '' };
+const NATIVE = { on: false, links: new Map(), plugin: null, platform: '', ip: null, kiss: new Map() };
+const FORM = { ipHost: '', modemKind: 'vara', modemHost: '', modemPort: '' };   // keeps typed values across re-renders
 const toStdB64 = u8 => { let s = b64e(u8).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return s; };
 async function startNative() {
   const C = window.Capacitor; if (!C?.isNativePlatform?.() || !C.registerPlugin) return;
@@ -972,9 +990,51 @@ async function startNative() {
   });
   N.addListener('disconnected', ({ id }) => { const l = NATIVE.links.get(id); NATIVE.links.delete(id); if (l) { l.dc.readyState = 'closed'; dropLink(l); } });
   N.addListener('error', e => console.warn('nearby', e));
+  N.addListener('kissData', ({ id, data }) => NATIVE.kiss.get(id)?.feed(b64d(data)));
+  N.addListener('kissClosed', ({ id }) => { const p = NATIVE.kiss.get(id); NATIVE.kiss.delete(id); p?.setState('off', 'انقطع المودم'); });
+  try { NATIVE.ip = await N.ipStart({ name: ME.id }); } catch (e) { console.warn('ip mesh', e); }
   try { await N.start({ name: ME.id }); NATIVE.on = true; toast('البحث عن الأجهزة القريبة عبر البلوتوث و Wi-Fi Direct'); }
   catch { toast('لم يُمنح إذن «الأجهزة القريبة». فعّله من إعدادات الهاتف ليعمل الاتصال بلا نقطة اتصال.'); }
   renderSoon();
+}
+
+async function connectIpSite(addr) {
+  const m = String(addr || '').trim().match(/^\[?([^\]\s]+?)\]?:(\d{1,5})$/);
+  if (!m) return toast('اكتب العنوان بالشكل 10.0.0.5:40123 (العنوان ثم المنفذ الظاهر على الجهاز الآخر)');
+  if (!NATIVE.plugin) return toast('الاتصال بموقع عبر عنوان IP يحتاج تطبيق Android أو iOS');
+  await NATIVE.plugin.ipConnect({ host: m[1], port: +m[2] }); toast('جارٍ الاتصال بالموقع البعيد…');
+}
+async function connectModemTcp(key, host, port) {
+  const N = NATIVE.plugin, m = WaslRadio.MODEMS[key];
+  if (!N) return toast('الاتصال بمودم VARA أو Direwolf يحتاج تطبيق Android أو iOS');
+  if (!ME.callsign) return toast('أدخل نداء الهواة (Callsign) أولاً، فهو إلزامي قانونياً');
+  if (!host) return toast('اكتب عنوان الحاسوب الذي يعمل عليه المودم');
+  let cid = null;
+  const p = new WaslRadio.KissStreamPort(m.kind, { bps: m.bps, mtu: m.mtu, ax25: true, callsign: ME.callsign,
+    write: b => N.kissSend({ id: cid, data: toStdB64(b) }), close: () => N.kissClose({ id: cid }) });
+  try { const r = await N.kissConnect({ host, port: +port || m.port }); cid = r.id; NATIVE.kiss.set(cid, p); attachRadio(p); await p.open(); toast(`${m.label}: متصل`); }
+  catch (e) { toast(`${m.label}: تعذّر الوصول إلى المودم على ${host}:${+port || m.port}`); }
+}
+
+/* ---------- manual carrier: messages travel as a file on a USB stick / SD card / any phone ---------- */
+const MANUAL = { kind: 'manual' };
+async function exportBundle() {
+  const card = { pid: rid(), src: ME.id, dst: '*', ttl: TTL, h: 0, type: 'card', body: await makeCard(), ts: Date.now() };
+  markSeen(card.pid);
+  const pkts = [card, ...Object.values(cardPkts), ...[...gossip.values()].map(x => x.pkt), ...[...outbox.values()].map(x => x.pkt), ...[...dtn.values()].map(x => x.pkt)];
+  const bytes = await deflate(JSON.stringify({ wasl: 1, from: ME.id, name: ME.name, ts: Date.now(), pkts }));
+  const name = `wasl-${(ME.name || ME.id).replace(/[^\p{L}\p{N}-]+/gu, '_')}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.wasl`;
+  if (NATIVE.plugin) { try { const r = await NATIVE.plugin.saveFile({ name, data: toStdB64(bytes) }); toast(`حُفظ الملف: ${r.path}`); } catch { toast('تعذّر حفظ الملف'); } }
+  else { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes])); a.download = name; document.body.append(a); a.click(); a.remove(); }
+  return { count: pkts.length, size: bytes.length, bytes };
+}
+async function importBundle(data) {
+  let o; try { o = JSON.parse(await inflate(data instanceof Uint8Array ? data : new Uint8Array(await data.arrayBuffer()))); } catch { toast('هذا ليس ملف وَصْل صالحاً'); return 0; }
+  if (o.wasl !== 1 || !Array.isArray(o.pkts)) { toast('هذا ليس ملف وَصْل صالحاً'); return 0; }
+  let n = 0;
+  for (const p of o.pkts) if (p && p.pid && !seen.has(p.pid)) { n++; await handlePacket(p, MANUAL); }
+  toast(`استُورد ${n} من ${o.pkts.length} حزمة من ${o.name || o.from}. ستُمرَّر لمن يلزم.`);
+  renderSoon(); return n;
 }
 
 /* ---------- pairing UI ---------- */
@@ -1068,7 +1128,15 @@ function wire() {
   $('#msgs').addEventListener('click', e => { const b = e.target.closest('[data-ack]'); if (b) { b.disabled = true; ackBroadcast(b.dataset.ack); } });
   wireOps();
   $('#netView').addEventListener('click', e => { const b = e.target.closest('[data-radio]'); if (!b) return;
-    let [kind, how] = b.dataset.radio.split(':'); if (kind === 'hf') kind = $('#hfBand')?.value || 'hf'; connectRadio(kind, how); });
+    const act = b.dataset.radio;
+    if (act === 'ipconnect') return connectIpSite(FORM.ipHost);
+    if (act === 'modem') return connectModemTcp(FORM.modemKind, FORM.modemHost.trim(), FORM.modemPort.trim());
+    if (act === 'export') return exportBundle();
+    if (act === 'import') return $('#bundleIn').click();
+    let [kind, how] = act.split(':'); if (kind === 'hf') kind = $('#hfBand')?.value || 'hf'; connectRadio(kind, how); });
+  $('#netView').addEventListener('input', e => { if (e.target.id in FORM) FORM[e.target.id] = e.target.value; });
+  $('#netView').addEventListener('change', e => { if (e.target.id === 'modemKind') { FORM.modemKind = e.target.value; renderNet(); } });
+  $('#bundleIn').addEventListener('change', () => { const f = $('#bundleIn').files[0]; $('#bundleIn').value = ''; if (f) importBundle(f); });
   $('#netView').addEventListener('change', async e => { if (e.target.id !== 'callIn') return;
     ME.callsign = e.target.value.trim().toUpperCase().replace(/[^A-Z0-9/]/g, ''); ME.idn.callsign = ME.callsign; await db.set('identity', ME.idn); toast('حُفظ نداء الهواة'); });
   $('#attachBtn').onclick = () => $('#fileIn').click();
@@ -1114,7 +1182,7 @@ async function boot() {
   if ('serviceWorker' in navigator && !window.Capacitor?.isNativePlatform?.()) navigator.serviceWorker.register('sw.js').catch(() => {});
   startNative();
   window.WASL = { ME, contacts, links, chats, stats, ledger: () => ledger, verifyLedger, seal, connectDirect,
-    ops: () => ops, radios, NATIVE, attachRadio, sendFile, startCall,
+    ops: () => ops, radios, NATIVE, exportBundle, importBundle, outbox, attachRadio, sendFile, startCall,
     setCallsign: cs => { ME.callsign = cs; },
     virtualRadio: (kind, opts) => attachRadio(Object.assign(new WaslRadio.VirtualPort(kind, opts), {})), sendSOS, ackBroadcast, createProposal, signProposal, armTimer, disarmTimer, checkTimers, health };  // debug/testing hook
 }

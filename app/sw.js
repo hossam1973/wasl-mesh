@@ -1,5 +1,5 @@
 // Offline-first cache: after the first visit the app opens with no network at all.
-const CACHE = 'wasl-v3';
+const CACHE = 'wasl-v4';
 const FILES = ['./', 'index.html', 'app.js', 'manifest.webmanifest', 'icon.svg', 'vendor/qrcode.js', 'vendor/jsQR.js', 'radio.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });

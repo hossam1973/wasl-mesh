@@ -28,6 +28,7 @@
 	<array>
 		<string>_wasl-mesh._tcp</string>
 		<string>_wasl-mesh._udp</string>
+		<string>_waslip._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>لمكالمات الفيديو ومسح رمز الربط مع الأجهزة القريبة.</string>

@@ -1,11 +1,16 @@
 package com.wasl.nearby;
 
 import android.Manifest;
+import android.content.ContentValues;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.util.Base64;
 
 import androidx.annotation.NonNull;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -29,6 +34,9 @@ import com.google.android.gms.nearby.connection.PayloadCallback;
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate;
 import com.google.android.gms.nearby.connection.Strategy;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -54,6 +62,87 @@ public class WaslNearbyPlugin extends Plugin {
     private String myName = "wasl";
     private final Set<String> connected = new HashSet<>();
     private boolean running = false;
+    private IpMesh ip;
+
+    private final IpMesh.Events ipEvents = new IpMesh.Events() {
+        @Override public void connected(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("connected", o); }
+        @Override public void data(String id, byte[] b) { JSObject o = new JSObject(); o.put("id", id); o.put("data", Base64.encodeToString(b, Base64.NO_WRAP)); notifyListeners("data", o); }
+        @Override public void disconnected(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("disconnected", o); }
+        @Override public void kissData(String id, byte[] b) { JSObject o = new JSObject(); o.put("id", id); o.put("data", Base64.encodeToString(b, Base64.NO_WRAP)); notifyListeners("kissData", o); }
+        @Override public void kissClosed(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("kissClosed", o); }
+        @Override public void error(String where, String message) { emitError(where, message); }
+    };
+
+    private IpMesh ip() { if (ip == null) ip = new IpMesh(getContext(), ipEvents); return ip; }
+
+    /** IP mesh (Wi-Fi, Ethernet, microwave, AREDN): auto-discovery on the local network + listening port. */
+    @PluginMethod
+    public void ipStart(PluginCall call) {
+        final String name = call.getString("name", "wasl");
+        ip().pool.execute(() -> {
+            try {
+                int port = ip().start(name);
+                JSObject o = new JSObject(); o.put("port", port); o.put("addresses", new JSArray(IpMesh.localAddresses()));
+                call.resolve(o);
+            } catch (Exception e) { call.reject("ip_start_failed", e.getMessage()); }
+        });
+    }
+
+    /** Dial a remote site by address, e.g. across a routed microwave link. */
+    @PluginMethod
+    public void ipConnect(PluginCall call) {
+        final String host = call.getString("host"); final Integer port = call.getInt("port");
+        if (host == null || port == null) { call.reject("bad_args"); return; }
+        ip().pool.execute(() -> { ip().dial(host, port); call.resolve(); });
+    }
+
+    /** TCP connection to a KISS modem: VARA HF (8100), ARDOP, Direwolf (8001). */
+    @PluginMethod
+    public void kissConnect(PluginCall call) {
+        final String host = call.getString("host"); final Integer port = call.getInt("port");
+        if (host == null || port == null) { call.reject("bad_args"); return; }
+        ip().pool.execute(() -> {
+            try { JSObject o = new JSObject(); o.put("id", ip().kissConnect(host, port)); call.resolve(o); }
+            catch (Exception e) { call.reject("modem_unreachable", e.getMessage()); }
+        });
+    }
+
+    @PluginMethod
+    public void kissSend(PluginCall call) {
+        final String id = call.getString("id"), data = call.getString("data");
+        if (id == null || data == null) { call.reject("bad_args"); return; }
+        final byte[] b = Base64.decode(data, Base64.NO_WRAP);
+        ip().pool.execute(() -> { if (ip().kissSend(id, b)) call.resolve(); else call.reject("send_failed"); });
+    }
+
+    @PluginMethod
+    public void kissClose(PluginCall call) { String id = call.getString("id"); if (id != null) ip().kissClose(id); call.resolve(); }
+
+    /** Save a file to Downloads (manual carrier bundles on USB / SD card). */
+    @PluginMethod
+    public void saveFile(PluginCall call) {
+        String name = call.getString("name", "wasl.bin"), data = call.getString("data");
+        if (data == null) { call.reject("bad_args"); return; }
+        byte[] b = Base64.decode(data, Base64.NO_WRAP);
+        try {
+            JSObject r = new JSObject();
+            if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                v.put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream");
+                Uri u = getContext().getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                if (u == null) throw new Exception("cannot create file");
+                try (OutputStream o = getContext().getContentResolver().openOutputStream(u)) { if (o == null) throw new Exception("cannot open file"); o.write(b); }
+                r.put("path", "Download/" + name);
+            } else {
+                File dir = getContext().getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+                File f = new File(dir, name);
+                try (FileOutputStream o = new FileOutputStream(f)) { o.write(b); }
+                r.put("path", f.getAbsolutePath());
+            }
+            call.resolve(r);
+        } catch (Exception e) { call.reject("save_failed", e.getMessage()); }
+    }
 
     private String[] neededAliases() {
         List<String> a = new ArrayList<>();
@@ -101,6 +190,11 @@ public class WaslNearbyPlugin extends Plugin {
     @PluginMethod
     public void send(PluginCall call) {
         String id = call.getString("id"), data = call.getString("data");
+        if (id != null && data != null && id.startsWith("ip:")) {
+            final byte[] b = Base64.decode(data, Base64.NO_WRAP);
+            ip().pool.execute(() -> { if (ip().send(id, b)) call.resolve(); else call.reject("send_failed"); });
+            return;
+        }
         if (client == null || id == null || data == null || !connected.contains(id)) { call.reject("not_connected"); return; }
         byte[] bytes = Base64.decode(data, Base64.NO_WRAP);
         if (bytes.length > ConnectionsClient.MAX_BYTES_DATA_SIZE) { call.reject("too_large"); return; }
@@ -112,6 +206,7 @@ public class WaslNearbyPlugin extends Plugin {
     @PluginMethod
     public void stop(PluginCall call) {
         if (client != null) { client.stopAdvertising(); client.stopDiscovery(); client.stopAllEndpoints(); }
+        if (ip != null) ip.stop();
         connected.clear(); running = false;
         call.resolve();
     }
