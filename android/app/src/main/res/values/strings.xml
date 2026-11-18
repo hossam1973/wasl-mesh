@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">وصل</string>
+    <string name="title_activity_main">وصل</string>
+    <string name="package_name">com.wasl.mesh</string>
+    <string name="custom_url_scheme">com.wasl.mesh</string>
+</resources>

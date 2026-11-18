@@ -154,6 +154,8 @@ function dropLink(link) {
   try { link.pc.close(); } catch {}
   if (link.id && links.get(link.id) === link) {
     links.delete(link.id);
+    const standby = [...NATIVE.links.values()].find(l => l !== link && l.id === link.id && !l.dropped);
+    if (standby) { links.set(link.id, standby); renderSoon(); return; }        // fall back to the Bluetooth / Wi-Fi Direct link
     if (contacts[link.id]) contacts[link.id].hops = 9;
     if (CALL.peer === link.id) endCall(false, 'انقطع الاتصال');
     sysMsg(link.id, 'انقطع الرابط المباشر. الرسائل ستُمرَّر عبر الأجهزة الأخرى إن أمكن.');
@@ -167,10 +169,14 @@ async function onLinkMsg(link, m) {
   if (m.t === 'hello') {
     const c = await openCard(m.card); if (!c || c.id === ME.id) return dropLink(link);
     if (link.expectId && link.expectId !== c.id) return dropLink(link);
-    const prev = links.get(c.id); if (prev && prev !== link) dropLink(prev);
+    const prev = links.get(c.id);
+    if (prev && prev !== link) {
+      if (link.native && !prev.native) { link.id = c.id; flushTo(link); return; }   // keep the WebRTC link (it carries calls); native stays on standby
+      if (!prev.native) dropLink(prev);
+    }
     link.id = c.id; links.set(c.id, link);
     await learnContact(c, 1); contacts[c.id].hops = 1;
-    sysMsg(c.id, 'رابط مباشر نشط. المكالمات متاحة.');
+    sysMsg(c.id, link.native ? 'رابط مباشر عبر البلوتوث / Wi-Fi Direct. الرسائل والملفات متاحة. للمكالمات اتصلوا بنفس نقطة الاتصال.' : 'رابط مباشر نشط. المكالمات متاحة.');
     toast(`اتصل ${c.name || c.id} مباشرة`);
     flushTo(link); announce();
     if (pairing && pairing.link === link) pairDone(c);
@@ -671,6 +677,7 @@ async function getMedia(video) {
 }
 async function startCall(peer, video) {
   const link = links.get(peer);
+  if (link?.native) return toast('هذا الرابط عبر البلوتوث / Wi-Fi Direct ولا يحمل مكالمات في المتصفح المدمج. اتصلا بنفس نقطة الاتصال ثم اضغط «اتصال مباشر».');
   if (!link) return toast(contacts[peer]?.via && contacts[peer].via !== 'ip'
     ? `هذا الجهاز متصل عبر ${VIA[contacts[peer].via]} فقط، وسعتها لا تكفي للصوت والفيديو. المكالمات تحتاج Wi-Fi أو رابط مايكروويف.`
     : 'المكالمات تحتاج رابطاً مباشراً. اضغط «اتصال مباشر» أولاً.');
@@ -829,7 +836,7 @@ function renderHead() {
   $('#cName').textContent = isSos ? 'قناة الطوارئ SOS' : (c?.name || id);
   $('#cStatus').textContent = isSos ? 'رسائل موقّعة تصل لكل الأجهزة في الشبكة' : `${r.text || ''} · ${id}`;
   $('#cAv').textContent = isSos ? '!' : initial(c?.name); $('#cAv').style.background = isSos ? 'var(--sos)' : colorOf(id);
-  const direct = links.has(id);
+  const direct = links.has(id) && !links.get(id).native;
   $('#voiceBtn').hidden = $('#videoBtn').hidden = isSos;
   $('#voiceBtn').disabled = $('#videoBtn').disabled = !direct;
   $('#directBtn').hidden = isSos || direct || !r.cls || ['hf', 'vhf'].includes(c?.via);
@@ -889,8 +896,12 @@ function layersHtml() {
   const st = (cls, t) => `<span class="pill ${cls}">${t}</span>`;
   const portInfo = p => p ? `<small class="hint">أُرسل ${p.stats.txFrames} إطاراً · استُقبل ${p.stats.rxFrames}${p.stats.bad ? ` · ${p.stats.bad} تالف` : ''}${p.lastCall ? ` · آخر محطة: ${esc(p.lastCall)}` : ''}${p.queue.length ? ` · ${p.queue.length} بانتظار البث` : ''}</small>` : '';
   const rows = [
-    ['Bluetooth LE', 'حتى 100 م', ['نص', 'ملفات صغيرة'], st('off', 'تطبيق أصلي'), 'المتصفح لا يسمح للهاتف بالبث كعقدة بلوتوث. تعمل في نسخة Android/iOS الأصلية.'],
-    ['Wi-Fi Direct / نقطة اتصال', 'حتى 100 م', ['فيديو', 'صوت', 'ملفات', 'نص'], links.size ? st('ok', `${links.size} روابط`) : st('mesh', 'جاهزة'), 'شغّل نقطة اتصال من أي هاتف واربط الأجهزة برمز QR. Wi-Fi Direct بلا نقطة اتصال في النسخة الأصلية.'],
+    ['Bluetooth LE', 'حتى 100 م', ['نص', 'ملفات', 'اكتشاف تلقائي'], NATIVE.on ? st('ok', `${NATIVE.links.size} أجهزة`) : st('off', 'في تطبيق الهاتف'),
+      NATIVE.on ? (NATIVE.platform === 'ios' ? 'Multipeer Connectivity: الهواتف القريبة تتصل تلقائياً عبر البلوتوث.' : 'Nearby Connections: الهواتف القريبة تتصل تلقائياً عبر البلوتوث LE.')
+        : 'المتصفح لا يسمح للهاتف بالبث كعقدة بلوتوث. ثبّت تطبيق وَصْل لـ Android أو iOS.'],
+    ['Wi-Fi Direct / نقطة اتصال', 'حتى 100 م', ['فيديو', 'صوت', 'ملفات', 'نص'], links.size ? st('ok', `${links.size} روابط`) : st('mesh', 'جاهزة'),
+      NATIVE.on ? (NATIVE.platform === 'ios' ? 'Wi-Fi نظير لنظير بلا نقطة اتصال للرسائل والملفات. للمكالمات: نقطة اتصال مشتركة.' : 'Wi-Fi Direct بلا نقطة اتصال للرسائل والملفات. للمكالمات: نقطة اتصال مشتركة ورمز QR.')
+        : 'شغّل نقطة اتصال من أي هاتف واربط الأجهزة برمز QR. Wi-Fi Direct بلا نقطة اتصال في تطبيق الهاتف.'],
     ['شبكة P2P (نمط libp2p)', 'كل الطبقات', ['توجيه', 'هوية'], st('ok', 'نشطة'), 'هوية من المفتاح العام، بث Gossip مع منع التكرار، تخزين ثم تمرير. التوافق المباشر مع libp2p في النسخة الأصلية.'],
     ['مايكروويف نقطة لنقطة', 'حتى 50 كم', ['فيديو', 'صوت', 'ملفات', 'نص'], st('mesh', 'عبر IP'), 'أي رابط IP بين المواقع (مثل أجهزة 5 GHz) يحمل WebRTC كاملاً. اربط جهازاً في كل موقع بنفس الشبكة ثم «اتصال مباشر».'],
     ['WebRTC', 'فوق أي IP', ['فيديو', 'صوت', 'ملفات', 'نص'], links.size ? st('ok', `${links.size} نشطة`) : st('mesh', 'جاهزة'), 'مكالمات مشفّرة DTLS-SRTP ونقل ملفات مباشر بين جهازين.'],
@@ -934,6 +945,36 @@ async function renderChain() {
     ${ledger.blocks.slice(-30).reverse().map(b => `<div class="block"><span class="k">#${b.i}</span><span class="v">${new Date(b.ts).toLocaleString('ar')} · ${b.e.length} أحداث</span>
       <span class="k">البصمة</span><span class="v mono">${b.hash.slice(0, 32)}…</span><span class="k">السابقة</span><span class="v mono">${b.prev.slice(0, 32)}…</span></div>`).join('') || '<p class="hint">لا توجد كتل بعد</p>'}`;
   $('#sealBtn').onclick = async () => { await seal(); renderChain(); };
+}
+
+/* ---------- native transport: Android Nearby Connections / iOS Multipeer Connectivity ----------
+ * In the Android / iOS app, nearby phones find each other and link automatically over
+ * Bluetooth LE + Wi-Fi Direct (Android) or Bluetooth + peer-to-peer Wi-Fi (iOS). No hotspot, no QR.
+ * These links carry the same signed, end-to-end encrypted mesh packets as WebRTC links. */
+const NATIVE = { on: false, links: new Map(), plugin: null, platform: '' };
+const toStdB64 = u8 => { let s = b64e(u8).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return s; };
+async function startNative() {
+  const C = window.Capacitor; if (!C?.isNativePlatform?.() || !C.registerPlugin) return;
+  const N = NATIVE.plugin = C.registerPlugin('WaslNearby'); NATIVE.platform = C.getPlatform?.() || '';
+  const ensure = id => {         // created on 'connected', or on the first data if that event arrives first
+    let link = NATIVE.links.get(id); if (link) return link;
+    link = { native: true, ep: id, id: null, pc: null, call: null,
+      dc: { readyState: 'open', bufferedAmount: 0, send: str => { N.send({ id, data: toStdB64(enc.encode(str)) }).catch(() => {}); } } };
+    NATIVE.links.set(id, link);
+    makeCard().then(card => rawSend(link, { t: 'hello', card }));
+    return link;
+  };
+  N.addListener('connected', ({ id }) => { ensure(id); });
+  N.addListener('data', ({ id, data }) => {
+    const link = ensure(id);
+    let m; try { m = JSON.parse(dec.decode(b64d(data))); } catch { return; }
+    onLinkMsg(link, m).catch(e => console.warn(e));
+  });
+  N.addListener('disconnected', ({ id }) => { const l = NATIVE.links.get(id); NATIVE.links.delete(id); if (l) { l.dc.readyState = 'closed'; dropLink(l); } });
+  N.addListener('error', e => console.warn('nearby', e));
+  try { await N.start({ name: ME.id }); NATIVE.on = true; toast('البحث عن الأجهزة القريبة عبر البلوتوث و Wi-Fi Direct'); }
+  catch { toast('لم يُمنح إذن «الأجهزة القريبة». فعّله من إعدادات الهاتف ليعمل الاتصال بلا نقطة اتصال.'); }
+  renderSoon();
 }
 
 /* ---------- pairing UI ---------- */
@@ -1053,7 +1094,7 @@ function renderMe() {
 
 /* ---------- boot ---------- */
 async function boot() {
-  if (!window.isSecureContext || !crypto.subtle || !window.RTCPeerConnection) {
+  if (!crypto.subtle || (!window.RTCPeerConnection && !window.Capacitor?.isNativePlatform?.())) {
     document.body.innerHTML = '<p style="padding:24px;font-family:sans-serif">يحتاج وَصْل إلى اتصال آمن (https) ومتصفح حديث. افتح التطبيق من رابطه الآمن مرة واحدة ثم ثبّته، وبعدها يعمل بلا إنترنت.</p>'; return;
   }
   const fresh = await loadIdentity();
@@ -1070,9 +1111,10 @@ async function boot() {
   setInterval(() => { if (ledger.pending.length) seal(); }, 30000);
   setInterval(renderSoon, 10000);
   setInterval(checkTimers, 15000);
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && !window.Capacitor?.isNativePlatform?.()) navigator.serviceWorker.register('sw.js').catch(() => {});
+  startNative();
   window.WASL = { ME, contacts, links, chats, stats, ledger: () => ledger, verifyLedger, seal, connectDirect,
-    ops: () => ops, radios, attachRadio, sendFile, startCall,
+    ops: () => ops, radios, NATIVE, attachRadio, sendFile, startCall,
     setCallsign: cs => { ME.callsign = cs; },
     virtualRadio: (kind, opts) => attachRadio(Object.assign(new WaslRadio.VirtualPort(kind, opts), {})), sendSOS, ackBroadcast, createProposal, signProposal, armTimer, disarmTimer, checkTimers, health };  // debug/testing hook
 }

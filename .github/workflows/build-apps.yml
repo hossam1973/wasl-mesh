@@ -1,0 +1,56 @@
+name: Build Android & iOS apps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci
+      - run: npx cap sync android
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+      - run: mv android/app/build/outputs/apk/debug/app-debug.apk wasl-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasl-android-apk
+          path: wasl-android.apk
+
+  ios:
+    name: iOS (simulator build, unsigned)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx cap sync ios
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build | tail -n 40
+          test -d build/Build/Products/Debug-iphonesimulator/App.app
+      - run: cd build/Build/Products/Debug-iphonesimulator && zip -qry ../../../../wasl-ios-simulator.zip App.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasl-ios-simulator-app
+          path: wasl-ios-simulator.zip

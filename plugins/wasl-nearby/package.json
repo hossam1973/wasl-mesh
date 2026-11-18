@@ -1,0 +1,9 @@
+{
+  "name": "wasl-nearby",
+  "version": "1.0.0",
+  "description": "Native nearby-device transport for Wasl: Android Nearby Connections (BLE + Wi-Fi Direct), iOS Multipeer Connectivity",
+  "license": "MIT",
+  "files": ["android/src/main/", "android/build.gradle", "ios/Sources", "WaslNearby.podspec"],
+  "capacitor": { "ios": { "src": "ios" }, "android": { "src": "android" } },
+  "peerDependencies": { "@capacitor/core": "^6.0.0" }
+}

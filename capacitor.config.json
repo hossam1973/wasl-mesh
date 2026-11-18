@@ -1,0 +1,7 @@
+{
+  "appId": "com.wasl.mesh",
+  "appName": "وصل",
+  "webDir": "app",
+  "android": { "allowMixedContent": false },
+  "ios": { "contentInset": "never" }
+}
