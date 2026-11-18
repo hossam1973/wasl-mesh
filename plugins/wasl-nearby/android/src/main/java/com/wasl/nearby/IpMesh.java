@@ -99,7 +99,7 @@ class IpMesh {
             @Override public void onStopDiscoveryFailed(String t, int code) { }
             @Override public void onDiscoveryStarted(String t) { }
             @Override public void onDiscoveryStopped(String t) { }
-            @Override public void onServiceLost(NsdServiceInfo s) { }
+            @Override public void onServiceLost(NsdServiceInfo s) { if (s.getServiceName() != null) dialed.remove(s.getServiceName()); }
             @Override public void onServiceFound(NsdServiceInfo s) {
                 String n = s.getServiceName();
                 // only the lexically smaller name dials, so each pair opens a single connection
@@ -122,19 +122,23 @@ class IpMesh {
             @Override public void onServiceResolved(NsdServiceInfo r) {
                 dialed.add(r.getServiceName());
                 final InetAddress host = r.getHost(); final int port = r.getPort();
-                if (host != null) pool.execute(() -> dial(host.getHostAddress(), port));
+                final String peer = r.getServiceName();
+                if (host != null) pool.execute(() -> { if (!dialTo(host.getHostAddress(), port)) dialed.remove(peer); });
                 finish();
             }
             private void finish() { synchronized (IpMesh.this) { resolving = false; } nextResolve(); }
         });
     }
 
-    void dial(String host, int port) {
+    void dial(String host, int port) { dialTo(host, port); }
+
+    private boolean dialTo(String host, int port) {
         try {
             Socket s = new Socket();
             s.connect(new InetSocketAddress(host, port), 10000);
             attach(s);
-        } catch (IOException e) { ev.error("ip-connect", host + ":" + port + " " + e.getMessage()); }
+            return true;
+        } catch (IOException e) { ev.error("ip-connect", host + ":" + port + " " + e.getMessage()); return false; }
     }
 
     private void attach(Socket s) throws IOException {

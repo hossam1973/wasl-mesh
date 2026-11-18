@@ -28,6 +28,13 @@ public class WaslNearbyPlugin: CAPPlugin, CAPBridgedPlugin, MCSessionDelegate, M
     private var advertiser: MCNearbyServiceAdvertiser?
     private var browser: MCNearbyServiceBrowser?
     private var peers: [String: MCPeerID] = [:]
+    private var inRange: [String: MCPeerID] = [:]          // found by the browser and not lost
+    private var tries: [String: Int] = [:]
+
+    private func invite(_ peerID: MCPeerID) {
+        guard let me = me, let s = session, let br = browser, me.displayName < peerID.displayName else { return }
+        br.invitePeer(peerID, to: s, withContext: nil, timeout: 20)
+    }
     private let lock = NSLock()
     private lazy var ip: WaslIpMesh = {
         let m = WaslIpMesh()
@@ -127,11 +134,11 @@ public class WaslNearbyPlugin: CAPPlugin, CAPBridgedPlugin, MCSessionDelegate, M
     // MARK: browser / advertiser
     public func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
         notifyListeners("found", data: ["id": key(peerID), "name": peerID.displayName])
-        // only one side invites, to avoid simultaneous-invite collisions
-        guard let me = me, let s = session, me.displayName < peerID.displayName else { return }
-        browser.invitePeer(peerID, to: s, withContext: nil, timeout: 20)
+        inRange[key(peerID)] = peerID; tries[key(peerID)] = 0
+        invite(peerID)            // only the lexically smaller name invites, to avoid collisions
     }
     public func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {
+        inRange.removeValue(forKey: key(peerID)); tries.removeValue(forKey: key(peerID))
         notifyListeners("lost", data: ["id": key(peerID)])
     }
     public func browser(_ browser: MCNearbyServiceBrowser, didNotStartBrowsingForPeers error: Error) {
@@ -155,6 +162,12 @@ public class WaslNearbyPlugin: CAPPlugin, CAPBridgedPlugin, MCSessionDelegate, M
         case .notConnected:
             lock.lock(); let had = peers.removeValue(forKey: k) != nil; lock.unlock()
             if had { notifyListeners("disconnected", data: ["id": k]) }
+            // failed invite or dropped link: retry with backoff while the peer is still in range
+            DispatchQueue.main.async {
+                guard let p = self.inRange[k] else { return }
+                let n = (self.tries[k] ?? 0) + 1; self.tries[k] = n
+                if n <= 5 { DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(1500 * n + Int.random(in: 0...1000))) { self.invite(p) } }
+            }
         default: break
         }
     }

@@ -37,7 +37,11 @@ import com.google.android.gms.nearby.connection.Strategy;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
+import android.os.Handler;
+import android.os.Looper;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -63,6 +67,20 @@ public class WaslNearbyPlugin extends Plugin {
     private final Set<String> connected = new HashSet<>();
     private boolean running = false;
     private IpMesh ip;
+    private final Handler retry = new Handler(Looper.getMainLooper());
+    private final Map<String, String> found = new HashMap<>();      // endpointId -> name, while in range
+    private final Map<String, Integer> attempts = new HashMap<>();
+
+    /** Bluetooth connection attempts often fail the first time; retry with backoff while the peer is still in range. */
+    private void dial(final String id) {
+        if (client == null || connected.contains(id) || !found.containsKey(id)) return;
+        client.requestConnection(myName, id, lifecycle).addOnFailureListener(e -> {
+            int n = attempts.containsKey(id) ? attempts.get(id) + 1 : 1;
+            attempts.put(id, n);
+            if (n <= 5) retry.postDelayed(() -> dial(id), 1500L * n + (long) (Math.random() * 1000));
+            else emitError("connect", e.getMessage());
+        });
+    }
 
     private final IpMesh.Events ipEvents = new IpMesh.Events() {
         @Override public void connected(String id) { JSObject o = new JSObject(); o.put("id", id); notifyListeners("connected", o); }
@@ -221,12 +239,11 @@ public class WaslNearbyPlugin extends Plugin {
             JSObject o = new JSObject(); o.put("id", id); o.put("name", info.getEndpointName());
             notifyListeners("found", o);
             // only one side dials, to avoid simultaneous-connect collisions
-            if (myName.compareTo(info.getEndpointName()) < 0 && !connected.contains(id)) {
-                client.requestConnection(myName, id, lifecycle)
-                    .addOnFailureListener(e -> emitError("connect", e.getMessage()));
-            }
+            found.put(id, info.getEndpointName());
+            if (myName.compareTo(info.getEndpointName()) < 0 && !connected.contains(id)) { attempts.put(id, 0); dial(id); }
         }
         @Override public void onEndpointLost(@NonNull String id) {
+            found.remove(id); attempts.remove(id);
             JSObject o = new JSObject(); o.put("id", id); notifyListeners("lost", o);
         }
     };
@@ -238,12 +255,15 @@ public class WaslNearbyPlugin extends Plugin {
         @Override public void onConnectionResult(@NonNull String id, @NonNull ConnectionResolution res) {
             int code = res.getStatus().getStatusCode();
             if (code == ConnectionsStatusCodes.STATUS_OK) {
-                connected.add(id);
+                connected.add(id); attempts.remove(id);
                 JSObject o = new JSObject(); o.put("id", id); notifyListeners("connected", o);
             }
         }
         @Override public void onDisconnected(@NonNull String id) {
             connected.remove(id);
+            // still discoverable? the dialing side reconnects
+            String n = found.get(id);
+            if (n != null && myName.compareTo(n) < 0) retry.postDelayed(() -> { attempts.put(id, 0); dial(id); }, 2000);
             JSObject o = new JSObject(); o.put("id", id); notifyListeners("disconnected", o);
         }
     };

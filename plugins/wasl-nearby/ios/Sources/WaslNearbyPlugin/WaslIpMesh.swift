@@ -46,7 +46,7 @@ final class WaslIpMesh {
                     for r in results {
                         if case let .service(peer, _, _, _) = r.endpoint, self.name < peer, !self.dialed.contains(peer) {
                             self.dialed.insert(peer)
-                            self.attach(NWConnection(to: r.endpoint, using: .tcp))
+                            self.attach(NWConnection(to: r.endpoint, using: .tcp), peer: peer)
                         }
                     }
                 }
@@ -61,7 +61,7 @@ final class WaslIpMesh {
         attach(NWConnection(host: NWEndpoint.Host(host), port: p, using: .tcp))
     }
 
-    private func attach(_ c: NWConnection) {
+    private func attach(_ c: NWConnection, peer: String? = nil) {
         let id = "ip:\(c.endpoint)"
         c.stateUpdateHandler = { [weak self] st in
             guard let self = self else { return }
@@ -70,8 +70,10 @@ final class WaslIpMesh {
                 self.conns[id] = c; self.onConnected?(id); self.readFrame(c, id)
             case .failed(let e):
                 self.onError?("ip-connect", e.localizedDescription); self.drop(id)
+                if let peer = peer { self.dialed.remove(peer) }
             case .cancelled:
                 self.drop(id)
+                if let peer = peer { self.dialed.remove(peer) }    // allows reconnection when the peer returns
             default: break
             }
         }

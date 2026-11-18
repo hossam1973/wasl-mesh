@@ -10,7 +10,7 @@
 (() => {
 const subtle = crypto.subtle, enc = new TextEncoder(), dec = new TextDecoder();
 const $ = s => document.querySelector(s);
-const TTL = 8, CHUNK = 16 * 1024, MAX_FILE = 25 * 1024 * 1024, CARD_EVERY = 20000;
+const TTL = 8, CHUNK = 12 * 1024, MAX_FILE = 25 * 1024 * 1024, CARD_EVERY = 20000;
 const SOS = '*sos';
 
 /* ---------- utils ---------- */
@@ -73,7 +73,32 @@ let active = null;                // open chat peerId
 
 /* ---------- identity ---------- */
 const pubJwk = j => ({ kty: j.kty, crv: j.crv, x: j.x, y: j.y });
-const fpOf = async jwk => { const h = (await sha(jwk.x + '.' + jwk.y)).toUpperCase(); return h.slice(0, 4) + '-' + h.slice(4, 8) + '-' + h.slice(8, 12); };
+const fpOf = async jwk => { const h = (await sha(jwk.x + '.' + jwk.y)).toUpperCase(); return [0, 4, 8, 12].map(i => h.slice(i, i + 4)).join('-'); };
+/* ---- input validation: everything arriving from another device is untrusted ---- */
+const ID_RE = /^[0-9A-F]{4}(-[0-9A-F]{4}){3}$/, RID_RE = /^[0-9a-f]{20}$/, HEX64 = /^[0-9a-f]{64}$/;
+const isId = x => typeof x === 'string' && ID_RE.test(x);
+const isRid = x => typeof x === 'string' && RID_RE.test(x);
+const str = (x, max) => typeof x === 'string' ? x.slice(0, max) : '';
+const int = (x, lo, hi, dflt) => { const n = Number(x); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.floor(n))) : dflt; };
+function cleanCard(c) {
+  if (!c || typeof c !== 'object' || !isId(c.id) || typeof c.sPub !== 'object' || typeof c.ePub !== 'object') return null;
+  const jwk = k => ({ kty: str(k.kty, 8), crv: str(k.crv, 8), x: str(k.x, 64), y: str(k.y, 64) });
+  return { id: c.id, name: str(c.name, 48), sPub: jwk(c.sPub), ePub: jwk(c.ePub), ts: int(c.ts, 0, 8.64e15, 0),
+    head: c.head && HEX64.test(c.head.h) ? { i: int(c.head.i, 0, 1e9, 0), h: c.head.h } : null,
+    nb: Array.isArray(c.nb) ? c.nb.filter(isId).slice(0, 64) : [],
+    bt: c.bt && typeof c.bt === 'object' ? { l: int(c.bt.l, 0, 100, 0), c: c.bt.c === true } : null,
+    st: c.st === 'alert' ? 'alert' : 'ok', rl: int(c.rl, 0, 1e9, 0) };
+}
+/* per-source limits on public broadcast types, so one device cannot flood the mesh (or a LoRa/HF channel) */
+const RATE = { card: 8, sos: 6, back: 60, prop: 10, psig: 30, tb: 5, tbx: 5, tbf: 10 }, rateLog = new Map();
+function rateOk(src, type) {
+  const lim = RATE[type]; if (!lim) return true;
+  const k = src + '|' + type, now = Date.now(), arr = (rateLog.get(k) || []).filter(t => now - t < 60000);
+  if (arr.length >= lim) { rateLog.set(k, arr); return false; }
+  arr.push(now); rateLog.set(k, arr);
+  if (rateLog.size > 5000) rateLog.clear();
+  return true;
+}
 async function loadIdentity() {
   let idn = await db.get('identity'), fresh = false;
   if (!idn) {
@@ -113,7 +138,8 @@ async function makeCard() {
   return { body, sig: await sign(body) };
 }
 async function openCard(card) {
-  try { const c = JSON.parse(card.body);
+  try { if (typeof card?.body !== 'string' || card.body.length > 4096) return null;
+    const c = cleanCard(JSON.parse(card.body)); if (!c) return null;
     if (!(await verifyWith(c.sPub, card.body, card.sig))) return null;
     if ((await fpOf(c.sPub)) !== c.id) return null;
     return c; } catch { return null; }
@@ -234,6 +260,7 @@ const NARROW = { ip: 0, lora: 1, air: 2, vhf: 2, hf: 3, manual: 4 };
 const narrowest = (a = 'ip', b = 'ip') => (NARROW[a] ?? 0) >= (NARROW[b] ?? 0) ? a : b;   // slowest layer along a path
 function radioPolicy(port, pkt, size) {
   if (!port.encrypt && pkt.type === 'sec') return 'التشفير ممنوع على موجات الهواة';
+  if (!port.encrypt && pkt.src !== ME.id && pkt.type !== 'sos') return 'لا تمرير لحركة الآخرين على موجات الهواة إلا الطوارئ';
   if (size > port.maxPkt) return 'الحزمة أكبر من قدرة الطبقة';
   if (pkt.type === 'card') { const last = port.cardTs[pkt.src] || 0; if (Date.now() - last < port.cardEvery) return 'بطاقة حديثة أُرسلت'; }
   return null;
@@ -264,7 +291,8 @@ async function connectRadio(kind, how) {
   if ((kind === 'hf' || kind === 'vhf') && !ME.callsign) { toast('أدخل نداء الهواة (Callsign) أولاً، فهو إلزامي قانونياً على HF/VHF'); return; }
   const R = window.WaslRadio;
   const port = how === 'audio' ? new R.AudioModemPort(kind) : new R.SerialKissPort(kind);
-  if (how !== 'audio' && (kind === 'hf' || kind === 'vhf')) { port.ax25 = true; port.callsign = ME.callsign; }   // AX.25 frames for hardware TNCs
+  if (kind === 'hf' || kind === 'vhf') { port.ax25 = true; port.callsign = ME.callsign; }   // AX.25: callsign in clear in every frame
+  if (kind === 'lora') port.duty = { eu10: 0.1, eu1: 0.01, none: 1 }[FORM.loraDuty] || 0.1;
   attachRadio(port);
   try { await port.open(kind === 'lora' ? 115200 : 9600); toast(`${VIA[kind]}: متصل`); }
   catch (e) { radios.delete(kind); toast(`${VIA[kind]}: ${e.message || 'تعذّر الاتصال'}`); }
@@ -276,10 +304,14 @@ function emit(type, dst, body, extra = {}) {
   return { pkt, n };
 }
 async function handlePacket(pkt, from) {
-  if (!pkt || !pkt.pid || seen.has(pkt.pid)) return;
+  if (!pkt || typeof pkt !== 'object' || !isRid(pkt.pid) || seen.has(pkt.pid)) return;
+  if (!isId(pkt.src) || (pkt.dst !== '*' && !isId(pkt.dst)) || typeof pkt.type !== 'string') return;
   markSeen(pkt.pid); stats.recv++;
-  const hops = (pkt.h || 0) + 1;
+  pkt.ttl = int(pkt.ttl, 0, TTL, 0); pkt.h = int(pkt.h, 0, 64, 0);
+  if (!(pkt.lw in NARROW)) pkt.lw = 'ip';
+  const hops = pkt.h + 1;
   if (pkt.src === ME.id) return;
+  if (pkt.dst === '*' && !rateOk(pkt.src, pkt.type)) return;          // drop (and do not relay) floods
   if (GOSSIP_TYPES.has(pkt.type) && pkt.ttl > 1) keepGossip({ ...pkt, ttl: pkt.ttl - 1, h: hops });
   const via = narrowest(pkt.lw, from && from.kind ? from.kind : 'ip');
   if (pkt.dst === '*' || pkt.dst === ME.id) await deliver(pkt, hops, via);
@@ -289,13 +321,16 @@ async function handlePacket(pkt, from) {
     if (flood(fwd, from)) stats.relayed++;
   }
 }
+function saveOutbox() { saveLater('outbox', () => [...outbox.entries()]); }
 function pruneDtn() { const cut = Date.now() - 3600000; for (const [k, v] of dtn) if (v.ts < cut || dtn.size > 400) dtn.delete(k);
   const cut2 = Date.now() - 86400000; for (const [k, v] of outbox) if ((v.ts || 0) < cut2) outbox.delete(k); }
 function flushTo(link) {  // store-and-forward: hand known identities and pending packets to a newly met device
-  for (const [id, pkt] of Object.entries(cardPkts)) if (id !== link.id) rawSend(link, { t: 'pkt', p: pkt });
-  for (const { pkt } of gossip.values()) rawSend(link, { t: 'pkt', p: pkt });   // broadcasts, decisions, timers reach late joiners
-  for (const { pkt } of outbox.values()) rawSend(link, { t: 'pkt', p: pkt });
-  for (const { pkt } of dtn.values()) rawSend(link, { t: "pkt", p: pkt });
+  let budget = link.native ? 2e6 : 8e6;                    // bytes per meeting; Bluetooth links get less
+  const give = pkt => { const s = JSON.stringify({ t: 'pkt', p: pkt }); if (s.length > budget) return; budget -= s.length; rawSend(link, JSON.parse(s)); };
+  for (const [id, pkt] of Object.entries(cardPkts)) if (id !== link.id) give(pkt);
+  for (const { pkt } of gossip.values()) give(pkt);        // SOS, decisions, timers reach late joiners first
+  const pending = [...outbox.values(), ...dtn.values()].map(x => x.pkt).sort((a, b) => JSON.stringify(a).length - JSON.stringify(b).length);
+  for (const pkt of pending) give(pkt);                    // short messages and receipts before file chunks
 }
 async function announce() { emit('card', '*', await makeCard()); renderSoon(); }
 
@@ -316,7 +351,7 @@ async function sendSecure(dst, obj, ref) {
   const sig = await sign(pid + '|' + dst + '|' + ivs + '|' + ct);
   const pkt = { pid, src: ME.id, dst, ttl: TTL, h: 0, type: 'sec', body: { iv: ivs, ct, sig }, ts: Date.now() };
   markSeen(pid);
-  if (ref) outbox.set(pid, { pkt, ref, ts: Date.now() });
+  if (ref) { outbox.set(pid, { pkt, ref, ts: Date.now() }); saveOutbox(); }
   const n = flood(pkt); stats.sent++;
   return { pid, n, ct };
 }
@@ -326,20 +361,26 @@ async function onSecure(pkt, hops) {
   let m; try { const { aes } = await keyFor(pkt.src);
     m = JSON.parse(dec.decode(await subtle.decrypt({ name: 'AES-GCM', iv: b64d(iv) }, aes, b64d(ct)))); } catch { return; }
   const from = pkt.src;
+  if (!m || typeof m !== 'object') return;
+  if ('id' in m && !isRid(m.id)) return;
+  m.ts = int(m.ts, 0, 8.64e15, Date.now());
   switch (m.k) {
     case 'text':
-      addMsg(from, { id: m.id, mine: false, kind: 'text', text: m.text, ts: m.ts, hops });
+      addMsg(from, { id: m.id, mine: false, kind: 'text', text: str(m.text, 4000), ts: m.ts, hops });
       logEntry('in', from, await sha(ct)); ack(from, m.id); notify(from, m.text); break;
     case 'file':
+      m.n = int(m.n, 1, 4096, 0); m.size = int(m.size, 0, MAX_FILE, 0); m.name = str(m.name, 120) || 'file'; m.type = str(m.type, 80);
+      if (!m.n || (m.h && !HEX64.test(m.h))) return;
       (incoming[m.id] ||= { parts: [], got: 0 }).meta = m;
-      addMsg(from, { id: m.id, mine: false, kind: 'file', name: m.name, type: m.type, size: m.size, voice: m.voice, ts: m.ts, hops, progress: 0 });
+      addMsg(from, { id: m.id, mine: false, kind: 'file', name: m.name, type: m.type, size: m.size, voice: m.voice === true, ts: m.ts, hops, progress: 0 });
       tryAssemble(from, m.id); break;
     case 'chunk': {
-      const f = (incoming[m.id] ||= { parts: [], got: 0 });
-      if (!f.parts[m.i]) { f.parts[m.i] = b64d(m.d); f.got++; }
+      const f = (incoming[m.id] ||= { parts: [], got: 0 }), i = int(m.i, 0, 4095, -1);
+      if (i < 0 || typeof m.d !== 'string' || (f.meta && i >= f.meta.n)) return;
+      if (!f.parts[i]) { f.parts[i] = b64d(m.d); f.got++; }
       tryAssemble(from, m.id); break; }
-    case 'ack': setStatus(from, m.ref, 'delivered'); for (const [pid, o] of outbox) if (o.ref === m.ref) outbox.delete(pid); break;
-    case 'read': for (const r of m.refs) setStatus(from, r, 'read'); break;
+    case 'ack': if (!isRid(m.ref)) return; setStatus(from, m.ref, 'delivered'); for (const [pid, o] of outbox) if (o.ref === m.ref) outbox.delete(pid); saveOutbox(); break;
+    case 'read': if (Array.isArray(m.refs)) for (const r of m.refs.slice(0, 500)) if (isRid(r)) setStatus(from, r, 'read'); break;
     case 'sig': onMeshSignal(from, m); break;
   }
 }
@@ -423,7 +464,8 @@ async function sendSOS(text, ty = 'SOS') {
 async function onSOS(pkt, hops) {
   const { body, sig } = pkt.body || {}; let o; try { o = JSON.parse(body); } catch { return; }
   if (o.id !== pkt.src || (await fpOf(o.sPub)) !== o.id || !(await verifyWith(o.sPub, body, sig))) return;
-  const ty = BT[o.ty] ? o.ty : 'SOS', bid = o.bid || pkt.pid, from = o.name || o.id;
+  const ty = BT[o.ty] ? o.ty : 'SOS', bid = isRid(o.bid) ? o.bid : pkt.pid, from = str(o.name, 48) || o.id;
+  o.text = str(o.text, 500); o.ts = int(o.ts, 0, 8.64e15, Date.now());
   const prev = ops.bc[bid];
   ops.bc[bid] = { acks: {}, ...(prev || {}), bid, ty, text: o.text, from, fromId: o.id, ts: o.ts }; saveOps();
   addMsg(SOS, { id: bid, mine: false, kind: 'sos', ty, bid, text: o.text, ts: o.ts, hops, from, fromId: o.id });
@@ -480,8 +522,24 @@ function fireTimer(t, det, last) {
   toast(`🚨 مؤقّت الأمان: انقطع ${nameOf(t.by)} منذ ${since}`, true); beep(3);
 }
 
+function validOps(type, o) {
+  o.ts = int(o.ts, 0, 8.64e15, Date.now());
+  switch (type) {
+    case 'back': return isRid(o.bid);
+    case 'prop':
+      if (!isRid(o.pid) || !Array.isArray(o.signers)) return false;
+      o.signers = [...new Set(o.signers.filter(isId))].slice(0, 32); if (o.signers.length < 1) return false;
+      o.th = int(o.th, 1, o.signers.length, 0); o.title = str(o.title, 80); o.text = str(o.text, 300); o.evac = o.evac === true;
+      return o.th > 0 && !!o.title;
+    case 'psig': return isRid(o.pid) && typeof o.h === 'string' && HEX64.test(o.h);
+    case 'tb': o.ms = int(o.ms, 1000, 30 * 86400000, 0); o.msg = str(o.msg, 200); o.name = str(o.name, 48); return isRid(o.tid) && o.ms > 0;
+    case 'tbx': case 'tbf': return isRid(o.tid);
+  }
+  return false;
+}
 async function onOps(type, b, src) {
-  const o = await openedObj(b || {}); if (!o || o.by !== src) return;
+  const o = await openedObj(b || {}); if (!o || o.by !== src || !isId(o.by)) return;
+  if (!validOps(type, o)) return;
   switch (type) {
     case 'back': { const bc = (ops.bc[o.bid] ||= { bid: o.bid, acks: {} }); bc.acks[o.by] = o.ts; if (active === SOS) renderMsgSoon(SOS); break; }
     case 'prop':
@@ -914,7 +972,8 @@ function layersHtml() {
     ['WebRTC', 'فوق أي IP', ['فيديو', 'صوت', 'ملفات', 'نص'], links.size ? st('ok', `${links.size} نشطة`) : st('mesh', 'جاهزة'), 'مكالمات مشفّرة DTLS-SRTP ونقل ملفات مباشر بين جهازين.'],
     ['LoRa', 'حتى 15 كم بلا رخصة', ['نص', 'SOS', 'ملفات حتى 12KB'], lora?.state === 'on' ? st('ok', 'متصل') : st('off', 'غير متصل'),
       `جهاز LoRa بنظام RNode أو أي TNC يدعم KISS عبر USB. نحو 1.7 كيلوبت/ث، مشفّر، مع احترام حد زمن البث. ${portInfo(lora)}
-       <div class="row"><button class="btn" data-radio="lora:serial">${lora?.state === 'on' ? 'إعادة الوصل' : 'وصل جهاز LoRa (USB)'}</button></div>`],
+       <div class="row"><select id="loraDuty"><option value="eu10" ${FORM.loraDuty === 'eu10' ? 'selected' : ''}>أوروبا 869.5 MHz · 10%</option><option value="eu1" ${FORM.loraDuty === 'eu1' ? 'selected' : ''}>أوروبا 868 MHz · 1%</option><option value="none" ${FORM.loraDuty === 'none' ? 'selected' : ''}>بلا حد زمن (915 MHz وغيرها)</option></select>
+       <button class="btn" data-radio="lora:serial">${lora?.state === 'on' ? 'إعادة الوصل' : 'وصل جهاز LoRa (USB)'}</button></div>`],
     ['HF / VHF راديو هواة', 'حتى 5000 كم (HF، برخصة هواة)', ['نص', 'SOS'], hf?.state === 'on' ? st('ok', `متصل · ${VIA[hf.kind]}`) : st('off', 'غير متصل'),
       `عبر كرت الصوت مع أي جهاز راديو (VOX) أو TNC عبر USB. 100 بت/ث على HF و600 على VHF. الرسائل موقّعة لكن غير مشفّرة، كما يشترط القانون. ${portInfo(hf)}
        <label class="hint" for="callIn">نداء الهواة (Callsign)</label><input type="text" id="callIn" value="${esc(ME.callsign || '')}" maxlength="10" placeholder="مثلاً HZ1ABC" class="mono">
@@ -969,7 +1028,7 @@ async function renderChain() {
  * Bluetooth LE + Wi-Fi Direct (Android) or Bluetooth + peer-to-peer Wi-Fi (iOS). No hotspot, no QR.
  * These links carry the same signed, end-to-end encrypted mesh packets as WebRTC links. */
 const NATIVE = { on: false, links: new Map(), plugin: null, platform: '', ip: null, kiss: new Map() };
-const FORM = { ipHost: '', modemKind: 'vara', modemHost: '', modemPort: '' };   // keeps typed values across re-renders
+const FORM = { ipHost: '', modemKind: 'vara', modemHost: '', modemPort: '', loraDuty: 'eu10' };   // keeps typed values across re-renders
 const toStdB64 = u8 => { let s = b64e(u8).replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return s; };
 async function startNative() {
   const C = window.Capacitor; if (!C?.isNativePlatform?.() || !C.registerPlugin) return;
@@ -1135,7 +1194,8 @@ function wire() {
     if (act === 'import') return $('#bundleIn').click();
     let [kind, how] = act.split(':'); if (kind === 'hf') kind = $('#hfBand')?.value || 'hf'; connectRadio(kind, how); });
   $('#netView').addEventListener('input', e => { if (e.target.id in FORM) FORM[e.target.id] = e.target.value; });
-  $('#netView').addEventListener('change', e => { if (e.target.id === 'modemKind') { FORM.modemKind = e.target.value; renderNet(); } });
+  $('#netView').addEventListener('change', e => { if (e.target.id === 'modemKind') { FORM.modemKind = e.target.value; renderNet(); }
+    if (e.target.id === 'loraDuty') { FORM.loraDuty = e.target.value; const p = radios.get('lora'); if (p) p.duty = { eu10: 0.1, eu1: 0.01, none: 1 }[FORM.loraDuty]; } });
   $('#bundleIn').addEventListener('change', () => { const f = $('#bundleIn').files[0]; $('#bundleIn').value = ''; if (f) importBundle(f); });
   $('#netView').addEventListener('change', async e => { if (e.target.id !== 'callIn') return;
     ME.callsign = e.target.value.trim().toUpperCase().replace(/[^A-Z0-9/]/g, ''); ME.idn.callsign = ME.callsign; await db.set('identity', ME.idn); toast('حُفظ نداء الهواة'); });
@@ -1167,6 +1227,7 @@ async function boot() {
   }
   const fresh = await loadIdentity();
   contacts = (await db.get('contacts')) || {}; chats = (await db.get('chats')) || {};
+  for (const [k, v] of (await db.get('outbox')) || []) outbox.set(k, v);
   ledger = (await db.get('ledger')) || ledger; witness = (await db.get('witness')) || {};
   ops = { bc: {}, props: {}, psigs: {}, tbs: {}, ...((await db.get('ops')) || {}) };
   try { const b = await navigator.getBattery?.(); if (b) { const u = () => ME.batt = { l: Math.round(b.level * 100), c: b.charging };
