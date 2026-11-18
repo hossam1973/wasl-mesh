@@ -9,6 +9,8 @@ jobs:
   android:
     name: Android APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write          # publish the APK as a direct download
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -31,6 +33,18 @@ jobs:
         with:
           name: wasl-android-apk
           path: wasl-android.apk
+      - name: Package the web platform
+        run: cd app && zip -qr ../wasl-web.zip .
+      - name: Publish direct downloads (release "latest")
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest wasl-android.apk wasl-web.zip \
+            --title "وصل — أحدث نسخة" \
+            --notes "نسخة تجريبية للاختبار الميداني. ثبّت wasl-android.apk مباشرة على Android (اسمح بالتثبيت من مصادر غير معروفة). wasl-web.zip يحوي منصة الويب كاملة. البناء: ${{ github.sha }}" \
+            --target ${{ github.sha }} --latest
 
   ios:
     name: iOS (simulator build, unsigned)
