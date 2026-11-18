@@ -1,0 +1,245 @@
+<title>مراجعة NexLink</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: single reading column, field-report style. Findings as severity-striped rows, roadmap as three phases. */
+:root{
+  --bg:#f3f5f4; --surface:#ffffff; --surface-2:#e7ecea; --line:#cdd6d2;
+  --fg:#15211e; --muted:#58675f; --accent:#0f7d6b;
+  --crit:#c3302a; --high:#c26a00; --med:#8a7a00; --ok:#2d8a3e;
+  --font-display:"Readex Pro","IBM Plex Sans Arabic",system-ui,sans-serif;
+  --font-body:"IBM Plex Sans Arabic",system-ui,"Segoe UI",Tahoma,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1614; --surface:#141f1c; --surface-2:#1b2925; --line:#28392f;
+  --fg:#e3ece8; --muted:#92a69e; --accent:#33c3a6;
+  --crit:#ff6359; --high:#f0a03a; --med:#d8c74a; --ok:#5ccf6d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1614; --surface:#141f1c; --surface-2:#1b2925; --line:#28392f;
+  --fg:#e3ece8; --muted:#92a69e; --accent:#33c3a6;
+  --crit:#ff6359; --high:#f0a03a; --med:#d8c74a; --ok:#5ccf6d; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:16px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 56px}
+main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:36px}
+h1,h2,h3{font-family:var(--font-display);text-wrap:balance;margin:0;line-height:1.3}
+h1{font-size:2rem}
+h2{font-size:1.35rem;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h3{font-size:1.02rem}
+p{margin:0;max-width:68ch}
+.mono,code{font-family:var(--font-mono);direction:ltr;unicode-bidi:isolate;font-size:.86em}
+section{display:flex;flex-direction:column;gap:14px}
+.lede{color:var(--muted);font-size:1.05rem}
+.meta{display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--muted);font-size:.85rem}
+.verdict{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:10px}
+.verdict ul{margin:0;padding-inline-start:20px;display:flex;flex-direction:column;gap:4px}
+.tabs-map{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.tabs-map div{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:.88rem;min-width:0}
+.tabs-map b{display:block;font-size:.92rem}
+.tabs-map span{color:var(--muted)}
+.finding{display:grid;grid-template-columns:6px minmax(0,1fr);background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.finding .bar{background:var(--sev)}
+.finding .body{padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.finding header{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+.sev{font-size:.72rem;font-weight:700;letter-spacing:.04em;color:var(--sev);border:1px solid var(--sev);border-radius:999px;padding:1px 9px}
+.crit{--sev:var(--crit)} .high{--sev:var(--high)} .med{--sev:var(--med)}
+.fix{font-size:.92rem;color:var(--muted)}
+.fix b{color:var(--fg)}
+.good{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.good div{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:10px 13px;font-size:.92rem}
+.good b{color:var(--ok)}
+.phase{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+.phase .when{color:var(--accent);font-weight:600;font-size:.85rem}
+.phase ul{margin:0;padding-inline-start:20px;display:flex;flex-direction:column;gap:6px}
+.phase li b{font-weight:600}
+pre{background:var(--surface-2);border-radius:10px;padding:14px;overflow-x:auto;margin:0;font-family:var(--font-mono);font-size:.8rem;line-height:1.6;direction:ltr;text-align:left}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:.88rem}
+th,td{border-bottom:1px solid var(--line);padding:8px;text-align:start;vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:.8rem}
+.next{border-inline-start:3px solid var(--accent);padding:12px 16px;background:var(--surface);border-radius:0 10px 10px 0}
+</style>
+
+<main>
+  <header style="display:flex;flex-direction:column;gap:10px">
+    <h1>مراجعة منصة NexLink Control Center</h1>
+    <p class="lede">تحليل تقني للمنصة المنشورة على z.ai، مع الأخطاء الحرجة وخطة تطوير بثلاث مراحل لتصبح منصة اتصال طوارئ يمكن الاعتماد عليها فعلاً.</p>
+    <div class="meta"><span>المصدر: <span class="mono">e1fja9dh8df0-d.space-z.ai</span></span><span>تاريخ الفحص: 18 نوفمبر 2026</span><span>الطريقة: تصفّح التبويبات العشرة وقراءة الواجهات البرمجية (قراءة فقط، دون إرسال أي بيانات)</span></div>
+  </header>
+
+  <section>
+    <h2>الخلاصة</h2>
+    <div class="verdict">
+      <p>المنصة لوحة تحكم مؤسسية جيدة الشكل ومتعددة اللغات، مبنية بـ Next.js، لإدارة شبكة أجهزة طوارئ. فكرتها قوية، لكنها اليوم <b>عرض توضيحي ببيانات تجريبية</b> وليست جاهزة للتشغيل الميداني. قبل إضافة أي ميزة جديدة يجب إصلاح ثلاث مشكلات:</p>
+      <ul>
+        <li>واجهة الأجهزة مفتوحة للعموم وتكشف أسماء الأشخاص وجهات عملهم وإحداثيات GPS دقيقة.</li>
+        <li>أي شخص على الإنترنت يستطيع إرسال نداء استغاثة أو إخلاء لكل الأجهزة، لأن واجهة الإذاعات لا تطلب تسجيل دخول ولا توقيعاً.</li>
+        <li>أزرار تحميل التطبيق لا تحتوي روابط لملفات فعلية.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>ما تحتويه المنصة الآن</h2>
+    <div class="tabs-map">
+      <div><b>لوحة المعلومات</b><span>16 جهازاً، 61 رسالة، 50 كتلة، آخر الرسائل والكتل</span></div>
+      <div><b>قوة الشبكة</b><span>مؤشر صحة، طوبولوجيا، جودة 21 رابطاً، أنواع النقل</span></div>
+      <div><b>المعمارية الحديثة</b><span>libp2p وWebRTC وIPFS وHypercore وYggdrasil</span></div>
+      <div><b>الأجهزة</b><span>جدول بالحالة والبطارية والإشارة والسمعة</span></div>
+      <div><b>خريطة الشبكة</b><span>رسم للعقد والمصادِقين</span></div>
+      <div><b>السلسلة</b><span>كتل NexChain مع مرساة Polygon</span></div>
+      <div><b>العقود</b><span>توقيع متعدد (MultiSig) وTimeBomb</span></div>
+      <div><b>الإذاعات</b><span>سجل نداءات SOS والإخلاء والاختبار</span></div>
+      <div><b>المصادِقون</b><span>7 مصادِقين بإجماع pBFT</span></div>
+      <div><b>تحميل التطبيق</b><span>Android وiOS وPWA، 11 لغة، جدول مقارنة</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>نقاط القوة</h2>
+    <div class="good">
+      <div><b>واجهة عربية متقنة</b> باتجاه RTL صحيح، وخط IBM Plex Arabic، و11 لغة.</div>
+      <div><b>نموذج بيانات مدروس</b>: مفاتيح Ed25519 وX25519 لكل جهاز، وبصمات، وعدد القفزات، ونوع النقل.</div>
+      <div><b>مقاييس شبكة مفيدة</b> مثل الانقسامات والجسور وتوزيع جودة الروابط، وهي ما يحتاجه مشغّل ميداني.</div>
+      <div><b>رؤية معمارية واضحة</b> للطبقات (اكتشاف، صوت وفيديو، تخزين، سجلات) يمكن البناء عليها.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>المشكلات مرتبة حسب الخطورة</h2>
+
+    <div class="finding crit"><div class="bar"></div><div class="body">
+      <header><span class="sev">حرجة</span><h3>كشف بيانات شخصية ومواقع دقيقة دون تسجيل دخول</h3></header>
+      <p>الطلب <code>GET /api/devices</code> يُرجع لأي زائر اسم كل شخص وجهة عمله (مثل «ريم • Mecca Logistics») وإحداثياته بدقة 14 خانة عشرية، أي بدقة أقل من سنتيمتر. هذا يناقض وعد «بدون بيانات شخصية»، وقد يعرّض فرق الإنقاذ للخطر في مناطق النزاع.</p>
+      <p class="fix"><b>الإصلاح:</b> قفل كل واجهات <code>/api</code> خلف تسجيل دخول بأدوار (مشغّل، مشرف، قراءة فقط)، وإرجاع موقع تقريبي فقط (Geohash من 6 خانات ≈ 1 كم)، وحذف الاسم والقسم من الردّ العام.</p>
+    </div></div>
+
+    <div class="finding crit"><div class="bar"></div><div class="body">
+      <header><span class="sev">حرجة</span><h3>أي شخص يستطيع إطلاق نداء استغاثة أو إخلاء لكل الأجهزة</h3></header>
+      <p>الواجهة الأمامية ترسل <code>POST /api/broadcasts</code> بلا رمز دخول وبلا توقيع، بالحقل <code>targetDeviceIds: "ALL"</code>. وجود إذاعات بعنوان «اختبار المنصة بعد الإصلاح» يؤكد أن الكتابة مفتوحة. كذلك يُنشئ <code>POST /api/contracts</code> مفتاح الناشر عشوائياً داخل المتصفح، فلا يثبت التوقيع من نشر العقد. إنذار إخلاء مزيّف واحد قد يسبب ذعراً حقيقياً.</p>
+      <p class="fix"><b>الإصلاح:</b> يجب أن يحمل كل أمر بث توقيع Ed25519 من مفتاح مشغّل مسجّل، يتحقق منه الخادم وتتحقق منه كل الأجهزة أيضاً. يُضاف حدّ للمعدّل، ويُشترط توقيعان (2 من 3) لنداءات الإخلاء العامة.</p>
+    </div></div>
+
+    <div class="finding high"><div class="bar"></div><div class="body">
+      <header><span class="sev">عالية</span><h3>التحميل لا يعمل</h3></header>
+      <p>صفحة «تحميل التطبيق» تعرض أزراراً وأحجام ملفات وبصمات SHA-256، لكن الصفحة لا تحتوي أي رابط فعلي، ولا رابط للكود المصدري رغم عبارة «مفتوح المصدر بالكامل».</p>
+      <p class="fix"><b>الإصلاح:</b> نشر ملف APK فعلي على GitHub Releases مع البصمة، ونشر الـ PWA بملف manifest وService Worker، ووضع رابط المستودع.</p>
+    </div></div>
+
+    <div class="finding high"><div class="bar"></div><div class="body">
+      <header><span class="sev">عالية</span><h3>البيانات ثابتة وأرقام متناقضة</h3></header>
+      <p>آخر لقطة لصحة الشبكة مؤرخة 11 نوفمبر، والإذاعات الحديثة عدد تأكيداتها صفر، و4 من 16 جهازاً غير متصلة منذ أيام. في الصفحة نفسها يظهر مؤشر الشبكة 83 وبجانبه «الصحة العامة 78»، وشارة «ممتاز» بينما لوحة المعلومات تقول «جيد» ونسبة الروابط الممتازة 0٪. المشغّل في الميدان سيفقد الثقة بالأرقام.</p>
+      <p class="fix"><b>الإصلاح:</b> مصدر واحد لحساب المؤشر، وتحديث حيّ عبر Server-Sent Events، ووقت آخر تحديث بجانب كل رقم مع تحذير عندما تكون البيانات قديمة.</p>
+    </div></div>
+
+    <div class="finding high"><div class="bar"></div><div class="body">
+      <header><span class="sev">عالية</span><h3>لوحة التحكم نفسها تحتاج الإنترنت</h3></header>
+      <p>المنصة مستضافة على الإنترنت، بينما الكارثة التي صُممت لها تقطع الإنترنت. ستنقطع غرفة العمليات عن الأجهزة في اللحظة التي تحتاجها فيها.</p>
+      <p class="fix"><b>الإصلاح:</b> نسخة «غرفة عمليات ميدانية» تعمل على حاسوب محمول أو Raspberry Pi متصل بالشبكة المتداخلة كأي جهاز آخر، وتتزامن مع الخادم السحابي عند عودة الاتصال.</p>
+    </div></div>
+
+    <div class="finding med"><div class="bar"></div><div class="body">
+      <header><span class="sev">متوسطة</span><h3>الإجماع والتوكنز قد يعطّلان الطوارئ</h3></header>
+      <p>إجماع pBFT مع 7 مصادِقين يحتاج 5 موافقات. عند انقسام الشبكة، وهو أمر طبيعي في الكوارث، تتوقف الكتل. ومرساة Polygon تحتاج إنترنت. أما مكافآت RELAY فتشجّع على تمرير رسائل وهمية لكسب التوكنز.</p>
+      <p class="fix"><b>الإصلاح:</b> نداء الاستغاثة لا ينتظر أي إجماع ويُمرَّر فوراً. السجل يكون محلياً لكل جهاز (Hypercore) ويُدمج لاحقاً. المكافأة تُحسب على التسليمات المؤكدة بإيصال موقّع من المستلم، وليس على عدد الرسائل الممرّرة.</p>
+    </div></div>
+
+    <div class="finding med"><div class="bar"></div><div class="body">
+      <header><span class="sev">متوسطة</span><h3>ادعاءات تسويقية يصعب إثباتها</h3></header>
+      <p>جدول «الأفضل عالمياً 16/16» يقارن مع WhatsApp وMessenger ويضع علامة الإنجاز على ميزات غير موجودة في النسخة الحالية. المنظمات الإنسانية تقيّم بالأدلة، وهذا الجدول قد يضر بالمصداقية.</p>
+      <p class="fix"><b>الإصلاح:</b> مقارنة مع منافسين حقيقيين في المجال نفسه (Briar وBridgefy وMeshtastic وFireChat)، وإظهار حالة كل ميزة: متاحة، أو تجريبية، أو مخطط لها.</p>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>خطة التطوير والميزات الجديدة</h2>
+
+    <div class="phase">
+      <span class="when">المرحلة 1 · أسبوعان · الأمان والثقة</span>
+      <h3>جعل المنصة آمنة للاستخدام الحقيقي</h3>
+      <ul>
+        <li><b>تسجيل دخول المشغّلين</b> بأدوار وصلاحيات، ومفتاح Ed25519 لكل مشغّل يوقّع به أوامر البث.</li>
+        <li><b>تقليل البيانات</b>: موقع تقريبي افتراضياً، وموقع دقيق فقط مع نداء استغاثة وبموافقة صاحبه.</li>
+        <li><b>سجل تدقيق</b> لكل أمر بث: من أرسله، ومتى، وبأي توقيع.</li>
+        <li><b>تحميل فعلي</b> لملف APK والـ PWA مع البصمات ورابط المستودع.</li>
+        <li><b>بيانات حيّة</b> عبر SSE، ومؤشر صحة موحّد، وتنبيه عند قِدم البيانات.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <span class="when">المرحلة 2 · 6 أسابيع · ميزات ميدانية</span>
+      <h3>ما تحتاجه فرق الإنقاذ فعلاً</h3>
+      <ul>
+        <li><b>طابور فرز الاستغاثات</b>: كل نداء له خطورة وفريق مكلّف وحالة (استُلم، كُلّف فريق، في الطريق، تم الإنقاذ)، وتصل الحالة لصاحب النداء عبر الشبكة.</li>
+        <li><b>«أنا بخير»</b>: زر واحد يرسل تأكيد سلامة للعائلة ومركز العمليات، مع بحث عن المفقودين بالبصمة.</li>
+        <li><b>خرائط بلا إنترنت</b> بملفات PMTiles محمّلة مسبقاً، مع طبقات للملاجئ والمستشفيات ونقاط المياه.</li>
+        <li><b>تتبع الإيصالات</b>: كل جهاز يرسل إيصالاً موقّعاً عند الاستلام، فيعرف المشغّل من وصله الإنذار ومن لم يصله.</li>
+        <li><b>أولويات في التخزين والتمرير</b>: الاستغاثة أولاً، ثم الرسائل النصية، ثم الصور، مع حد أقصى لعمر الرسالة.</li>
+        <li><b>جسر LoRa / Meshtastic</b> لمدى يصل إلى عدة كيلومترات بأجهزة رخيصة، يربط الأحياء المنفصلة.</li>
+        <li><b>بوابة احتياطية</b>: أي جهاز يجد إنترنت أو قمراً صناعياً أو رسائل SMS يرفع الاستغاثات المتراكمة تلقائياً.</li>
+        <li><b>توفير البطارية</b>: الجهاز الذي بطاريته أقل من 20٪ يتوقف عن التمرير ويحتفظ بقدرته على الإرسال والاستقبال.</li>
+        <li><b>وضع التدريب</b>: نداءات تجريبية معلّمة بوضوح لا تختلط بالحقيقية.</li>
+      </ul>
+    </div>
+
+    <div class="phase">
+      <span class="when">المرحلة 3 · 3 أشهر · ذكاء اصطناعي على الجهاز</span>
+      <h3>ميزات تميّز المنصة عن المنافسين</h3>
+      <ul>
+        <li><b>فرز ذكي للاستغاثات</b>: نموذج صغير يعمل على الهاتف بلا إنترنت يقرأ نص النداء ويقدّر الخطورة (نزيف، أطفال، محاصرون).</li>
+        <li><b>ترجمة فورية بلا إنترنت</b> بين اللغات الإحدى عشرة، مفيدة في مخيمات اللاجئين والحج.</li>
+        <li><b>تخطيط التغطية</b>: تحليل الانقسامات واقتراح أماكن وضع أجهزة تقوية لربط العناقيد المعزولة.</li>
+        <li><b>كشف الانتحال</b>: رصد أجهزة تبث بكثافة غير طبيعية أو بمفاتيح غير مسجلة، وعزلها تلقائياً.</li>
+        <li><b>رسائل صوتية مضغوطة</b> بترميز Codec2 (أقل من 2 كيلوبت/ثانية) لمن لا يستطيع الكتابة.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>مثال على إصلاح البث المفتوح</h2>
+    <p>هذا شكل مسار البث بعد الإصلاح في Next.js: لا يُقبل أي أمر إلا من مشغّل مسجّل وبتوقيع صالح ووقت حديث.</p>
+    <pre>// app/api/broadcasts/route.ts
+import { verify } from "@noble/ed25519";
+import { prisma } from "@/lib/db";
+import { getOperator } from "@/lib/auth";
+
+export async function POST(req: Request) {
+  const op = await getOperator(req);               // session + role check
+  if (!op || !op.roles.includes("broadcaster"))
+    return Response.json({ error: "غير مصرّح" }, { status: 401 });
+
+  const { payload, signature } = await req.json(); // payload = JSON string
+  const msg = JSON.parse(payload);
+  const fresh = Math.abs(Date.now() - msg.ts) &lt; 60_000;
+  const ok = fresh &amp;&amp; await verify(signature, new TextEncoder().encode(payload), op.ed25519PublicKey);
+  if (!ok) return Response.json({ error: "توقيع غير صالح أو منتهي" }, { status: 403 });
+
+  if (msg.type === "EVACUATION" &amp;&amp; !(await hasCoSigner(msg)))
+    return Response.json({ error: "الإخلاء يحتاج توقيع مشرف ثانٍ" }, { status: 409 });
+
+  const b = await prisma.broadcast.create({ data: { ...msg, triggeredById: op.id, signature } });
+  await prisma.auditLog.create({ data: { actor: op.id, action: "BROADCAST", ref: b.id } });
+  return Response.json(b, { status: 201 });
+}</pre>
+  </section>
+
+  <section>
+    <h2>مقارنة واقعية مع منصات المجال</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>المنصة</th><th>النقل</th><th>نقطة قوتها</th><th>ما يمكن أن يتفوق به NexLink</th></tr></thead>
+      <tbody>
+        <tr><td>Briar</td><td>Bluetooth وWi-Fi وTor</td><td>أمان مدقّق ومفتوح المصدر</td><td>لوحة عمليات مؤسسية وفرز استغاثات</td></tr>
+        <tr><td>Bridgefy</td><td>Bluetooth متداخل</td><td>سهولة وانتشار واسع</td><td>تشفير أقوى (Bridgefy تعرّض لثغرات منشورة) وخرائط بلا إنترنت</td></tr>
+        <tr><td>Meshtastic</td><td>LoRa</td><td>مدى عدة كيلومترات</td><td>يعمل على الهاتف وحده دون جهاز إضافي، مع جسر LoRa اختياري</td></tr>
+        <tr><td>goTenna</td><td>راديو خاص</td><td>موثوقية ميدانية</td><td>كلفة أقل بكثير، ولا يحتاج عتاداً خاصاً</td></tr>
+      </tbody></table></div>
+  </section>
+
+  <section>
+    <h2>الخطوة التالية</h2>
+    <div class="next">
+      <p>لا يمكنني تعديل المنصة على z.ai مباشرة، لأنه لا يوجد ربط بين Claude وz.ai. لتنفيذ هذه الخطة على الكود نفسه: صدّر المشروع من z.ai إلى مستودع GitHub وأرسل لي اسمه. سأبدأ بإصلاحات المرحلة الأولى، ثم أرسل التعديلات إلى المستودع لتسحبها إلى z.ai.</p>
+    </div>
+  </section>
+</main>

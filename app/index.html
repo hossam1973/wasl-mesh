@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>وَصْل</title>
+<meta name="description" content="مراسلة ومكالمات من هاتف إلى هاتف بلا إنترنت ولا شبكة خلوية">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<meta name="theme-color" content="#0d5c50">
+<style>
+/* Two-pane messenger: conversation list + thread. Collapses to one pane on phones. */
+:root{
+  --bg:#e9eeec; --side:#ffffff; --pane:#f2f5f3; --surface:#ffffff; --surface-2:#e4eae7; --line:#d3dcd8;
+  --fg:#13201c; --muted:#5b6a64; --accent:#0d7a68; --accent-2:#0a5c4f; --accent-ink:#fff;
+  --mine:#d6f2e9; --theirs:#ffffff; --sos:#c8322b; --sos-soft:#fbe3e1; --ok:#2d8a3e; --read:#1b7fd1;
+  --font:"IBM Plex Sans Arabic","Segoe UI",Tahoma,system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#0b1210; --side:#111a17; --pane:#0d1513; --surface:#16211e; --surface-2:#1c2a26; --line:#24342f;
+  --fg:#e3ece8; --muted:#8fa39b; --accent:#2fbf9f; --accent-2:#239e84; --accent-ink:#04201a;
+  --mine:#164a3e; --theirs:#1a2623; --sos:#ff5a4f; --sos-soft:#3b1715; --ok:#5ccf6d; --read:#5db4ff; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);font-size:15px;line-height:1.5;overflow:hidden}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+[hidden]{display:none!important}
+.mono{font-family:var(--mono);direction:ltr;unicode-bidi:isolate}
+svg.i{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+#app{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);height:100%;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+#side{background:var(--side);border-inline-end:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+#pane{background:var(--pane);display:flex;flex-direction:column;min-height:0;min-width:0}
+@media (max-width:760px){
+  #app{grid-template-columns:minmax(0,1fr)}
+  #app.in-chat #side{display:none}
+  #app:not(.in-chat) #pane{display:none}
+}
+.side-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px max(14px,env(safe-area-inset-right)) 12px 14px;border-bottom:1px solid var(--line)}
+.me{display:flex;align-items:center;gap:10px;min-width:0}
+.me div{display:flex;flex-direction:column;min-width:0}
+.me b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me small{color:var(--muted);font-size:.78rem}
+.avatar{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;flex:none;font-size:1.05rem}
+.btn{border:1px solid var(--line);background:var(--surface-2);border-radius:10px;padding:7px 12px;font-size:.88rem;white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn.danger{background:var(--sos);border-color:var(--sos);color:#fff;font-weight:600}
+.icon{background:none;border:0;border-radius:50%;width:40px;height:40px;display:grid;place-items:center;color:var(--muted)}
+.icon:hover{background:var(--surface-2);color:var(--fg)}
+.icon:disabled{opacity:.35;cursor:not-allowed}
+.views{display:flex;border-bottom:1px solid var(--line)}
+.views button{flex:1;background:none;border:0;border-bottom:3px solid transparent;padding:10px 6px;color:var(--muted);font-weight:600;font-size:.9rem}
+.views button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+.view{flex:1;overflow:auto;min-height:0}
+.side-foot{padding:8px 14px;border-top:1px solid var(--line);font-size:.8rem;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
+
+.item{display:flex;gap:12px;align-items:center;padding:10px 14px;border:0;background:none;width:100%;text-align:start;border-bottom:1px solid var(--line)}
+.item:hover,.item[aria-current="true"]{background:var(--surface-2)}
+.item .mid{flex:1;min-width:0;display:flex;flex-direction:column}
+.item .row{display:flex;justify-content:space-between;gap:8px}
+.item b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item small{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.82rem}
+.item time{font-size:.72rem;color:var(--muted);flex:none}
+.badge{background:var(--accent);color:var(--accent-ink);border-radius:999px;font-size:.72rem;padding:0 7px;font-weight:700}
+.reach{font-size:.72rem;display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--line);display:inline-block}
+.dot.direct{background:var(--ok)} .dot.mesh{background:#d99a00}
+.item.sos .avatar{background:var(--sos)}
+.empty{color:var(--muted);text-align:center;padding:28px 18px;font-size:.92rem}
+
+.welcome{margin:auto;max-width:460px;padding:24px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center}
+.welcome h1{margin:0;font-size:1.6rem}
+.welcome p{margin:0;color:var(--muted)}
+.steps{text-align:start;display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:.9rem;margin:0;padding-inline-start:20px}
+
+#chat{display:flex;flex-direction:column;height:100%;min-height:0}
+.chat-head{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--side);border-bottom:1px solid var(--line)}
+.chat-head .who{flex:1;min-width:0;display:flex;flex-direction:column}
+.chat-head .who b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-head .who small{color:var(--muted);font-size:.78rem}
+.chat-head .acts{display:flex;gap:2px;align-items:center}
+#backBtn{display:none}
+@media (max-width:760px){#backBtn{display:grid}}
+#msgs{flex:1;overflow:auto;padding:14px max(14px,4%);display:flex;flex-direction:column;gap:6px;min-height:0}
+.day{align-self:center;background:var(--surface);color:var(--muted);font-size:.75rem;padding:2px 10px;border-radius:8px;margin:6px 0}
+.bubble{max-width:min(78%,520px);padding:7px 10px 5px;border-radius:12px;background:var(--theirs);box-shadow:0 1px 1px rgba(0,0,0,.08);overflow-wrap:anywhere;display:flex;flex-direction:column;gap:4px}
+.bubble.mine{align-self:flex-start;background:var(--mine);border-start-start-radius:3px}
+.bubble.theirs{align-self:flex-end;border-start-end-radius:3px}
+.bubble.sos{background:var(--sos-soft);border:1px solid var(--sos)}
+.bubble.sys{align-self:center;background:var(--surface-2);color:var(--muted);font-size:.8rem;box-shadow:none}
+.bubble .from{font-size:.78rem;font-weight:700;color:var(--sos)}
+.bubble .meta{display:flex;gap:6px;justify-content:flex-end;align-items:center;font-size:.7rem;color:var(--muted)}
+.tick{font-weight:700;letter-spacing:-3px} .tick.read{color:var(--read)}
+.bubble img,.bubble video{max-width:100%;border-radius:8px;display:block;max-height:320px}
+.bubble audio{width:240px;max-width:100%}
+.file{display:flex;align-items:center;gap:10px;background:var(--surface-2);border-radius:8px;padding:8px 10px;text-decoration:none;color:inherit}
+.file small{color:var(--muted);display:block}
+.prog{height:4px;background:var(--line);border-radius:2px;overflow:hidden}
+.prog i{display:block;height:100%;background:var(--accent)}
+
+#composer{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--side);border-top:1px solid var(--line)}
+#textIn{flex:1;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:22px;padding:10px 14px}
+.send{background:var(--accent)!important;color:var(--accent-ink)!important}
+.rec{background:var(--sos)!important;color:#fff!important;animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.6}}
+
+.net,.chain{padding:12px 14px;display:flex;flex-direction:column;gap:10px;font-size:.88rem}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.stat{background:var(--surface-2);border-radius:10px;padding:8px 10px}
+.stat b{display:block;font-family:var(--mono);font-size:1.2rem}
+.stat span{color:var(--muted);font-size:.75rem}
+.node{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:7px 10px;background:var(--surface-2);border-radius:9px}
+.node small{color:var(--muted)}
+.block{border:1px solid var(--line);border-radius:9px;padding:7px 10px;font-size:.78rem;display:grid;grid-template-columns:auto minmax(0,1fr);gap:1px 10px}
+.block .k{color:var(--muted)} .block .v{overflow-wrap:anywhere}
+.ok-box{border:1px solid var(--ok);border-radius:9px;padding:8px 10px}
+.bad-box{border:1px solid var(--sos);background:var(--sos-soft);border-radius:9px;padding:8px 10px}
+.hint{color:var(--muted);font-size:.82rem;margin:0}
+h3{margin:4px 0 0;font-size:.95rem}
+
+dialog{border:0;border-radius:16px;padding:0;background:var(--surface);color:var(--fg);width:min(520px,calc(100% - 24px));max-height:calc(100% - 24px)}
+dialog::backdrop{background:rgba(0,0,0,.5)}
+.dlg{padding:18px;display:flex;flex-direction:column;gap:12px;overflow:auto}
+.dlg h2{margin:0;font-size:1.15rem}
+.dlg .row{display:flex;gap:8px;flex-wrap:wrap}
+.dlg textarea{width:100%;min-height:90px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);padding:8px;font-family:var(--mono);font-size:.72rem;direction:ltr}
+.dlg input[type=text]{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);padding:10px}
+.qr{background:#fff;border-radius:12px;padding:10px;align-self:center;max-width:100%}
+.qr svg{display:block;width:min(300px,70vw);height:auto}
+.scan{position:relative;border-radius:12px;overflow:hidden;background:#000;aspect-ratio:1;max-width:320px;width:100%;align-self:center}
+.scan video{width:100%;height:100%;object-fit:cover}
+.tabs2{display:flex;gap:6px}
+.tabs2 button{flex:1}
+.tabs2 button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.status{font-size:.88rem;color:var(--muted)}
+
+#call{position:fixed;inset:0;background:#06100d;color:#fff;z-index:50;display:flex;flex-direction:column}
+#remoteV{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}
+#localV{position:absolute;top:calc(14px + env(safe-area-inset-top));left:14px;width:min(28vw,180px);aspect-ratio:3/4;object-fit:cover;border-radius:12px;border:2px solid rgba(255,255,255,.5);background:#111}
+.call-info{position:absolute;top:calc(20px + env(safe-area-inset-top));inset-inline:0;text-align:center;pointer-events:none;text-shadow:0 1px 4px #000}
+.call-info b{font-size:1.4rem;display:block}
+.call-av{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+.call-av .avatar{width:120px;height:120px;font-size:2.6rem}
+.call-ctl{display:flex;justify-content:center;gap:18px;padding:18px 0 calc(22px + env(safe-area-inset-bottom));background:linear-gradient(transparent,rgba(0,0,0,.7));position:absolute;bottom:0;inset-inline:0}
+.round{width:58px;height:58px;border-radius:50%;border:0;display:grid;place-items:center;background:rgba(255,255,255,.18);color:#fff}
+.round.end{background:#e0352b} .round.ok{background:#2d9a4a}
+.round[aria-pressed="true"]{background:#fff;color:#111}
+
+#toast{position:fixed;top:calc(12px + env(safe-area-inset-top));inset-inline:0;margin:auto;width:fit-content;max-width:calc(100% - 24px);background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:12px;z-index:60;font-size:.9rem}
+#toast.sos{background:var(--sos);color:#fff;font-weight:600}
+
+#ops{display:flex;flex-direction:column;height:100%;min-height:0}
+.ops-body{flex:1;overflow:auto;padding:14px max(14px,3%);display:flex;flex-direction:column;gap:14px;min-height:0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.kpi b{display:block;font-family:var(--mono);font-size:1.5rem;line-height:1.2}
+.kpi span{color:var(--muted);font-size:.78rem}
+.kpi.hero{border-color:var(--accent)} .kpi.alert b{color:var(--sos)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h3{margin:0;font-size:1rem}
+.topo-wrap{display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:12px;align-items:start}
+@media (max-width:900px){.topo-wrap{grid-template-columns:minmax(0,1fr)}}
+#topo{width:100%;aspect-ratio:16/10;max-width:100%;background:var(--pane);border-radius:10px;display:block}
+.topo-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;font-size:.82rem}
+.topo-stats div{background:var(--surface-2);border-radius:8px;padding:6px 8px}
+.topo-stats b{display:block;font-family:var(--mono);font-size:1.05rem}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:.85rem}
+th,td{border-bottom:1px solid var(--line);padding:7px 8px;text-align:start;white-space:nowrap}
+th{color:var(--muted);font-weight:600;font-size:.76rem}
+.pill{display:inline-block;border-radius:999px;padding:0 8px;font-size:.74rem;font-weight:600;border:1px solid currentColor}
+.pill.ok{color:var(--ok)} .pill.mesh{color:#c48a00} .pill.off{color:var(--muted)} .pill.alert{color:var(--sos)}
+.batt{display:inline-flex;align-items:center;gap:6px}
+.batt i{display:inline-block;width:34px;height:8px;border-radius:3px;background:var(--surface-2);overflow:hidden}
+.batt i u{display:block;height:100%;background:var(--ok)}
+.batt i u.low{background:var(--sos)}
+.list{display:flex;flex-direction:column;gap:8px}
+.row-item{border:1px solid var(--line);border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:4px;font-size:.88rem}
+.row-item.alert{border-color:var(--sos);background:var(--sos-soft)}
+.row-item .top{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center}
+.row-item small{color:var(--muted)}
+.inline-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.inline-form input[type=text]{flex:1;min-width:180px}
+.stack-form{display:flex;flex-direction:column;gap:8px}
+.ops-body input[type=text],.ops-body select,#bcType{border:1px solid var(--line);background:var(--surface-2);border-radius:10px;padding:8px 10px}
+.signers{display:flex;flex-wrap:wrap;gap:6px}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:.85rem;border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--surface-2)}
+.ackb{align-self:flex-start;border:1px solid var(--accent);background:none;color:var(--accent);border-radius:8px;padding:2px 10px;font-size:.8rem;font-weight:600}
+.layers{display:flex;flex-direction:column;gap:8px}
+.layer{border:1px solid var(--line);border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:5px;font-size:.84rem}
+.layer .top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.layer .desc{color:var(--muted);font-size:.8rem;display:flex;flex-direction:column;gap:6px}
+.layer input,.layer select{border:1px solid var(--line);background:var(--surface-2);border-radius:8px;padding:6px 8px}
+.layer .row{display:flex;gap:6px;flex-wrap:wrap}
+.cap{display:inline-block;background:var(--surface-2);border-radius:6px;padding:0 7px;margin-inline-end:4px;font-size:.74rem}
+.tylbl{font-size:.75rem;font-weight:700}
+@media (prefers-reduced-motion: reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
+  <symbol id="i-end" viewBox="0 0 24 24"><path d="M10.7 13.3a16 16 0 0 0 3.4 2.6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7M23 1L1 23"/></symbol>
+  <symbol id="i-cam-off" viewBox="0 0 24 24"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2m5.7 0H14a2 2 0 0 1 2 2v3.3l1 1L23 7v10M1 1l22 22"/></symbol>
+  <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="M1 1l22 22M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V4a3 3 0 0 0-5.9-.6"/><path d="M17 16.9A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.1 1.2M12 19v4M8 23h8"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></symbol>
+</svg>
+
+<div id="app">
+  <aside id="side">
+    <header class="side-head">
+      <div class="me"><div class="avatar" id="meAv">؟</div><div><b id="meName">…</b><small class="mono" id="meId">…</small></div></div>
+      <button class="btn primary" id="pairBtn">+ جهاز قريب</button>
+    </header>
+    <nav class="views" role="tablist">
+      <button role="tab" data-v="chats" aria-selected="true">الدردشات</button>
+      <button role="tab" data-v="net" aria-selected="false">الشبكة</button>
+      <button role="tab" data-v="chain" aria-selected="false">السجل</button>
+      <button role="tab" data-v="ops" aria-selected="false">القيادة</button>
+    </nav>
+    <div class="view" id="vChats"><div id="chatList"></div></div>
+    <div class="view" id="vNet" hidden><div class="net" id="netView"></div></div>
+    <div class="view" id="vChain" hidden><div class="chain" id="chainView"></div></div>
+    <div class="view" id="vOps" hidden><div class="net" id="opsSide"></div></div>
+    <footer class="side-foot"><span id="footLinks">0 روابط مباشرة</span><span id="footNodes">0 أجهزة في الشبكة</span><span>الإنترنت: غير مستخدم</span></footer>
+  </aside>
+
+  <main id="pane">
+    <div class="welcome" id="welcome">
+      <h1>وَصْل</h1>
+      <p>رسائل وملفات ومكالمات صوت وفيديو من هاتف إلى هاتف، بلا إنترنت ولا شريحة ولا رقم هاتف.</p>
+      <ol class="steps">
+        <li>شغّل نقطة اتصال (Hotspot) على أحد الهواتف، أو اتصلوا بنفس شبكة Wi-Fi ولو بلا إنترنت.</li>
+        <li>اضغط «+ جهاز قريب» وامسح رمز الطرف الآخر.</li>
+        <li>كل جهاز متصل يصبح حلقة وصل: الرسائل تقفز عبره إلى أجهزة أبعد.</li>
+      </ol>
+      <button class="btn primary" id="pairBtn2">+ اربط أول جهاز</button>
+    </div>
+    <section id="chat" hidden>
+      <header class="chat-head">
+        <button class="icon" id="backBtn" aria-label="رجوع"><svg class="i"><use href="#i-back"/></svg></button>
+        <div class="avatar" id="cAv"></div>
+        <div class="who"><b id="cName"></b><small id="cStatus"></small></div>
+        <div class="acts">
+          <button class="btn" id="directBtn" hidden title="أنشئ رابطاً مباشراً عبر الشبكة لتفعيل المكالمات"><svg class="i" style="width:16px;height:16px;vertical-align:-3px"><use href="#i-link"/></svg> اتصال مباشر</button>
+          <button class="icon" id="voiceBtn" aria-label="مكالمة صوتية"><svg class="i"><use href="#i-phone"/></svg></button>
+          <button class="icon" id="videoBtn" aria-label="مكالمة فيديو"><svg class="i"><use href="#i-video"/></svg></button>
+        </div>
+      </header>
+      <div id="msgs"></div>
+      <form id="composer">
+        <button type="button" class="icon" id="attachBtn" aria-label="إرفاق ملف"><svg class="i"><use href="#i-clip"/></svg></button>
+        <input type="file" id="fileIn" hidden>
+        <label for="bcType" hidden>نوع البث</label>
+        <select id="bcType" hidden><option value="SOS">🚨 استغاثة</option><option value="EVAC">📢 إخلاء</option><option value="WARN">⚠️ تحذير</option><option value="TEST">🧪 اختبار</option></select>
+        <label for="textIn" hidden>الرسالة</label>
+        <input id="textIn" autocomplete="off" placeholder="اكتب رسالة" maxlength="4000">
+        <button type="button" class="icon" id="micBtn" aria-label="رسالة صوتية"><svg class="i"><use href="#i-mic"/></svg></button>
+        <button type="submit" class="icon send" id="sendBtn" aria-label="إرسال" hidden><svg class="i"><use href="#i-send"/></svg></button>
+      </form>
+    </section>
+
+    <section id="ops" hidden>
+      <header class="chat-head">
+        <button class="icon" id="opsBack" aria-label="رجوع"><svg class="i"><use href="#i-back"/></svg></button>
+        <div class="who"><b>مركز القيادة الميداني</b><small>يعمل بلا إنترنت · كل الأرقام من الأجهزة في شبكتك الآن</small></div>
+      </header>
+      <div class="ops-body">
+        <div class="kpis" id="kpis"></div>
+        <div class="card">
+          <h3>قوة الشبكة وطوبولوجيتها</h3>
+          <div class="topo-wrap"><canvas id="topo" aria-label="خريطة الروابط بين الأجهزة"></canvas><div class="topo-stats" id="topoStats"></div></div>
+        </div>
+        <div class="card">
+          <h3>الأجهزة</h3>
+          <div class="tbl"><table><thead><tr><th>الجهاز</th><th>الحالة</th><th>البطارية</th><th>القفزات</th><th>مرّر</th><th>آخر ظهور</th></tr></thead><tbody id="devRows"></tbody></table></div>
+        </div>
+        <div class="card">
+          <h3>الإذاعات العامة</h3>
+          <p class="hint">بث موقّع يصل لكل جهاز في الشبكة. كل مستلم يضغط «تم الاستلام» فيظهر لك عدد المؤكِّدين.</p>
+          <form class="inline-form" id="bcForm">
+            <label for="bcFormType" hidden>النوع</label>
+            <select id="bcFormType"><option value="SOS">🚨 استغاثة</option><option value="EVAC">📢 إخلاء</option><option value="WARN">⚠️ تحذير</option><option value="TEST">🧪 اختبار</option></select>
+            <label for="bcFormText" hidden>نص البث</label>
+            <input type="text" id="bcFormText" maxlength="300" placeholder="مثلاً: تحذير من فيضان، توجّهوا إلى المدرسة الشرقية">
+            <button class="btn danger" type="submit">بث للجميع</button>
+          </form>
+          <div class="list" id="bcList"></div>
+        </div>
+        <div class="card">
+          <h3>القرارات الجماعية (عقد توقيع متعدد)</h3>
+          <p class="hint">قرار لا يُعتمد إلا إذا وقّعه العدد المطلوب من المنسّقين. كل جهاز يتحقق من التواقيع بنفسه، فلا يستطيع شخص واحد إطلاق إخلاء مزيّف.</p>
+          <form class="stack-form" id="propForm">
+            <label for="propTitle" hidden>العنوان</label>
+            <input type="text" id="propTitle" maxlength="80" placeholder="عنوان القرار، مثلاً: إخلاء حي الوادي">
+            <label for="propText" hidden>التفاصيل</label>
+            <input type="text" id="propText" maxlength="300" placeholder="التفاصيل: إلى أين، ومتى">
+            <span class="hint">الموقّعون:</span>
+            <div class="signers" id="propSigners"></div>
+            <div class="inline-form">
+              <label for="propTh">التواقيع المطلوبة</label><select id="propTh"></select>
+              <label class="chk" for="propEvac"><input type="checkbox" id="propEvac" checked> عند الاعتماد: أطلق إنذار إخلاء للجميع</label>
+            </div>
+            <button class="btn primary" type="submit">انشر القرار للتوقيع</button>
+          </form>
+          <div class="list" id="propList"></div>
+        </div>
+        <div class="card">
+          <h3>مؤقّت الأمان</h3>
+          <p class="hint">إذا انقطع جهازك عن الشبكة أطول من المدة المحددة (نفاد بطارية، احتجاز، إصابة)، تطلق الأجهزة الأخرى رسالتك المسبقة كنداء استغاثة. الأجهزة هي التي تراقب، لا خادم.</p>
+          <form class="inline-form" id="tbForm">
+            <label for="tbMs" hidden>المدة</label>
+            <select id="tbMs"><option value="1800000">30 دقيقة</option><option value="7200000" selected>ساعتان</option><option value="21600000">6 ساعات</option><option value="86400000">24 ساعة</option><option value="604800000">7 أيام</option></select>
+            <label for="tbMsg" hidden>الرسالة</label>
+            <input type="text" id="tbMsg" maxlength="200" placeholder="رسالتك إن انقطعت: أين كنت ذاهباً ومع من">
+            <button class="btn primary" type="submit">تفعيل</button>
+          </form>
+          <div class="list" id="tbList"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog id="nameDlg">
+  <form class="dlg" method="dialog" id="nameForm">
+    <h2>مرحباً بك في وَصْل</h2>
+    <p class="hint">هويتك زوج مفاتيح أُنشئ الآن على جهازك. لا نطلب رقم هاتف ولا بريداً، ولا يوجد خادم يحفظ بياناتك.</p>
+    <p>معرّفك: <b class="mono" id="newId"></b></p>
+    <label for="nameIn">الاسم الذي يراه من حولك (اختياري)</label>
+    <input type="text" id="nameIn" maxlength="32" placeholder="مثلاً: سارة - فريق الإسعاف">
+    <button class="btn primary" id="nameOk">ابدأ</button>
+  </form>
+</dialog>
+
+<dialog id="pairDlg">
+  <div class="dlg">
+    <h2>ربط جهاز قريب</h2>
+    <div class="tabs2">
+      <button class="btn" id="modeShow" aria-pressed="true">أنا أعرض الرمز</button>
+      <button class="btn" id="modeScan" aria-pressed="false">أنا أمسح الرمز</button>
+    </div>
+    <p class="status" id="pairStatus"></p>
+    <div class="qr" id="qrBox" hidden></div>
+    <div class="scan" id="scanBox" hidden><video id="scanV" playsinline muted></video></div>
+    <label for="pairOut" class="hint" id="pairOutLbl" hidden>أو انسخ الرمز وأرسله بأي وسيلة قريبة:</label>
+    <textarea id="pairOut" readonly hidden></textarea>
+    <div class="row" id="outBtns" hidden><button class="btn" id="copyBtn">نسخ الرمز</button><button class="btn" id="shareBtn">مشاركة</button></div>
+    <label for="pairIn" class="hint" id="pairInLbl">الصق رمز الطرف الآخر هنا إذا تعذّر المسح:</label>
+    <textarea id="pairIn" placeholder="WASL1…"></textarea>
+    <div class="row"><button class="btn primary" id="pairGo">متابعة</button><button class="btn" id="scanStart">فتح الكاميرا</button><button class="btn" id="pairClose">إغلاق</button></div>
+  </div>
+</dialog>
+
+<div id="call" hidden>
+  <video id="remoteV" autoplay playsinline></video>
+  <div class="call-av" id="callAv"><div class="avatar" id="callAvatar"></div></div>
+  <video id="localV" autoplay playsinline muted></video>
+  <div class="call-info"><b id="callName"></b><span id="callState"></span></div>
+  <div class="call-ctl">
+    <button class="round" id="muteBtn" aria-pressed="false" aria-label="كتم الصوت"><svg class="i"><use href="#i-mic-off"/></svg></button>
+    <button class="round" id="camBtn" aria-pressed="false" aria-label="إيقاف الكاميرا"><svg class="i"><use href="#i-cam-off"/></svg></button>
+    <button class="round ok" id="acceptBtn" aria-label="رد" hidden><svg class="i"><use href="#i-phone"/></svg></button>
+    <button class="round end" id="hangBtn" aria-label="إنهاء"><svg class="i"><use href="#i-end"/></svg></button>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="radio.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
