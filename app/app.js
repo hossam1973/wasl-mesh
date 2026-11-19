@@ -103,14 +103,15 @@ async function loadIdentity() {
   let idn = await db.get('identity'), fresh = false;
   if (!idn) {
     const s = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-    const e = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
+    const e = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey', 'deriveBits']);
     idn = { name: '', sPriv: await subtle.exportKey('jwk', s.privateKey), sPub: pubJwk(await subtle.exportKey('jwk', s.publicKey)),
       ePriv: await subtle.exportKey('jwk', e.privateKey), ePub: pubJwk(await subtle.exportKey('jwk', e.publicKey)) };
     await db.set('identity', idn); fresh = true;
   }
   ME.sKey = await subtle.importKey('jwk', idn.sPriv, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
   ME.vKey = await subtle.importKey('jwk', idn.sPub, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
-  ME.eKey = await subtle.importKey('jwk', idn.ePriv, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey']);
+  const { key_ops, ...ePriv } = idn.ePriv;       // identities from older versions were exported with deriveKey only
+  ME.eKey = await subtle.importKey('jwk', ePriv, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey', 'deriveBits']);
   ME.sPub = idn.sPub; ME.ePub = idn.ePub; ME.name = idn.name; ME.idn = idn; ME.callsign = idn.callsign || '';
   ME.id = await fpOf(idn.sPub);
   return fresh;
@@ -120,12 +121,17 @@ async function verifyWith(jwk, data, sig) {
   try { const k = await subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
     return await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, k, b64d(sig), enc.encode(data)); } catch { return false; }
 }
+/* ECDH shared secret -> HKDF-SHA256 (salt = both identities) -> AES-256-GCM */
+async function hkdfKey(priv, pub, salt) {
+  const bits = await subtle.deriveBits({ name: 'ECDH', public: pub }, priv, 256);
+  const ikm = await subtle.importKey('raw', bits, 'HKDF', false, ['deriveKey']);
+  return subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: enc.encode(salt), info: enc.encode('wasl-e2e-v2') }, ikm, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
 async function keyFor(id) {
   const c = contacts[id]; if (!c) throw new Error('unknown contact');
   if (!keys[id]) keys[id] = {
     vk: await subtle.importKey('jwk', c.sPub, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']),
-    aes: await subtle.deriveKey({ name: 'ECDH', public: await subtle.importKey('jwk', c.ePub, { name: 'ECDH', namedCurve: 'P-256' }, false, []) },
-      ME.eKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']),
+    aes: await hkdfKey(ME.eKey, await subtle.importKey('jwk', c.ePub, { name: 'ECDH', namedCurve: 'P-256' }, false, []), [ME.id, id].sort().join('|')),
   };
   return keys[id];
 }
@@ -133,7 +139,7 @@ async function keyFor(id) {
 /* ---------- identity cards (signed presence) ---------- */
 const headInfo = () => { const b = ledger.blocks[ledger.blocks.length - 1]; return b ? { i: b.i, h: b.hash } : null; };
 async function makeCard() {
-  const body = JSON.stringify({ id: ME.id, name: ME.name, sPub: ME.sPub, ePub: ME.ePub, ts: Date.now(), head: headInfo(),
+  const body = JSON.stringify({ id: ME.id, name: PRIV.hideName ? '' : ME.name, sPub: ME.sPub, ePub: ME.ePub, ts: Date.now(), head: headInfo(),
     nb: [...links.keys()], bt: ME.batt || null, st: Date.now() < (ME.alertUntil || 0) ? 'alert' : 'ok', rl: stats.relayed });
   return { body, sig: await sign(body) };
 }
@@ -146,6 +152,7 @@ async function openCard(card) {
 }
 async function learnContact(c, hops, via = 'ip') {
   if (c.id === ME.id) return;
+  if (!contacts[c.id] && !links.has(c.id) && !acceptNewIdentity(c.id, false)) return;
   const old = contacts[c.id];
   if (old && (old.sPub.x !== c.sPub.x || old.sPub.y !== c.sPub.y)) return; // id is bound to key; ignore impostors
   if (old && c.ts < (old.ts || 0)) return; // stale card
@@ -195,6 +202,7 @@ async function onLinkMsg(link, m) {
   if (m.t === 'hello') {
     const c = await openCard(m.card); if (!c || c.id === ME.id) return dropLink(link);
     if (link.expectId && link.expectId !== c.id) return dropLink(link);
+    if (!acceptNewIdentity(c.id, !!link.expectId || !!(pairing && pairing.link === link))) return dropLink(link);
     const prev = links.get(c.id);
     if (prev && prev !== link) {
       if (link.native && !prev.native) { link.id = c.id; flushTo(link); return; }   // keep the WebRTC link (it carries calls); native stays on standby
@@ -315,7 +323,7 @@ async function handlePacket(pkt, from) {
   if (GOSSIP_TYPES.has(pkt.type) && pkt.ttl > 1) keepGossip({ ...pkt, ttl: pkt.ttl - 1, h: hops });
   const via = narrowest(pkt.lw, from && from.kind ? from.kind : 'ip');
   if (pkt.dst === '*' || pkt.dst === ME.id) await deliver(pkt, hops, via);
-  if (pkt.dst !== ME.id && pkt.ttl > 1) {
+  if (pkt.dst !== ME.id && pkt.ttl > 1 && relayAllowed(pkt)) {
     const fwd = { ...pkt, ttl: pkt.ttl - 1, h: hops, lw: via };
     if (pkt.dst !== '*') { dtn.set(pkt.pid, { pkt: fwd, ts: Date.now() }); pruneDtn(); }
     if (flood(fwd, from)) stats.relayed++;
@@ -332,7 +340,7 @@ function flushTo(link) {  // store-and-forward: hand known identities and pendin
   const pending = [...outbox.values(), ...dtn.values()].map(x => x.pkt).sort((a, b) => JSON.stringify(a).length - JSON.stringify(b).length);
   for (const pkt of pending) give(pkt);                    // short messages and receipts before file chunks
 }
-async function announce() { emit('card', '*', await makeCard()); renderSoon(); }
+async function announce() { if (PRIV.vis === 'stealth') { renderSoon(); return; } emit('card', '*', await makeCard()); renderSoon(); }
 
 async function deliver(pkt, hops, via = 'ip') {
   if (pkt.type === 'card') { const c = await openCard(pkt.body);
@@ -372,15 +380,18 @@ async function onSecure(pkt, hops) {
       m.n = int(m.n, 1, 4096, 0); m.size = int(m.size, 0, MAX_FILE, 0); m.name = str(m.name, 120) || 'file'; m.type = str(m.type, 80);
       if (!m.n || (m.h && !HEX64.test(m.h))) return;
       (incoming[m.id] ||= { parts: [], got: 0 }).meta = m;
-      addMsg(from, { id: m.id, mine: false, kind: 'file', name: m.name, type: m.type, size: m.size, voice: m.voice === true, ts: m.ts, hops, progress: 0 });
+      addMsg(from, { id: m.id, mine: false, kind: 'file', name: m.name, type: m.type, size: m.size, voice: m.voice === true, ts: m.ts, hops, progress: 0, h: m.h && HEX64.test(m.h) ? m.h : undefined });
       tryAssemble(from, m.id); break;
     case 'chunk': {
       const f = (incoming[m.id] ||= { parts: [], got: 0 }), i = int(m.i, 0, 4095, -1);
       if (i < 0 || typeof m.d !== 'string' || (f.meta && i >= f.meta.n)) return;
       if (!f.parts[i]) { f.parts[i] = b64d(m.d); f.got++; }
       tryAssemble(from, m.id); break; }
-    case 'ack': if (!isRid(m.ref)) return; setStatus(from, m.ref, 'delivered'); for (const [pid, o] of outbox) if (o.ref === m.ref) outbox.delete(pid); saveOutbox(); break;
+    case 'ack': if (!isRid(m.ref)) return; if (!onGroupAck(from, m.ref)) setStatus(from, m.ref, 'delivered');
+      for (const [pid, o] of outbox) if (o.ref === m.ref || o.ref === m.ref + '|' + from) outbox.delete(pid); saveOutbox(); break;
     case 'read': if (Array.isArray(m.refs)) for (const r of m.refs.slice(0, 500)) if (isRid(r)) setStatus(from, r, 'read'); break;
+    case 'gtext': onGroupText(from, m, hops); break;
+    case 'loc': onLocation(from, m, hops); break;
     case 'sig': onMeshSignal(from, m); break;
   }
 }
@@ -413,7 +424,7 @@ async function sendFile(to, file, voice) {
   const m = { id: rid(), mine: true, kind: 'file', name: file.name || 'voice.webm', type: file.type, size: buf.length, voice: !!voice,
     ts: Date.now(), status: 'pending', blob: new Blob([buf], { type: file.type }), progress: 0 };
   addMsg(to, m);
-  const h = await sha(buf);
+  const h = await sha(buf); m.h = h;
   const first = await sendSecure(to, { k: 'file', id: m.id, name: m.name, type: m.type, size: m.size, n, voice: m.voice, ts: m.ts, h }, m.id);
   for (let i = 0; i < n; i++) {
     for (const l of links.values()) while (l.dc && l.dc.bufferedAmount > 1 << 20) await sleep(30);
@@ -452,6 +463,7 @@ async function publish(type, obj) {
 /* typed broadcasts */
 async function sendSOS(text, ty = 'SOS') {
   if (!BT[ty]) ty = 'SOS';
+  if (PRIV.sosLoc && ty === 'SOS') { const p = await getPos(3000); if (p) text += ` · 📍 ${p.lat.toFixed(5)},${p.lon.toFixed(5)} ±${Math.round(p.acc)}م`; }
   const bid = rid(), ts = Date.now();
   const body = JSON.stringify({ id: ME.id, name: ME.name, sPub: ME.sPub, text, ts, ty, bid });
   const { pkt } = emit('sos', '*', { body, sig: await sign(body) }); keepGossip(pkt);
@@ -681,17 +693,18 @@ function addMsg(peer, m) {
   if (!m.mine && m.kind !== 'sys') { if (active === peer && document.visibilityState === 'visible') queueRead(peer, m); else m.unread = true; }
   saveChats(); renderSoon(); if (active === peer) renderMsgSoon(peer);
 }
-function sysMsg(peer, text) { if (!contacts[peer] && peer !== SOS) return; addMsg(peer, { id: rid(), kind: 'sys', text, ts: Date.now() }); }
+function sysMsg(peer, text) { if (!contacts[peer] && peer !== SOS && !isGroupChat(peer)) return; addMsg(peer, { id: rid(), kind: 'sys', text, ts: Date.now() }); }
 const findMsg = (peer, id) => (chats[peer] || []).find(m => m.id === id);
 function setStatus(peer, id, st) { const m = findMsg(peer, id); if (!m) return;
   const rank = { pending: 0, queued: 1, sent: 2, delivered: 3, read: 4 }; if (rank[st] > (rank[m.status] ?? 0)) { m.status = st; saveChats(); renderMsgSoon(peer); } }
 let readQ = {};
-function queueRead(peer, m) { if (peer === SOS) return; (readQ[peer] ||= []).push(m.id); clearTimeout(readQ.t);
+function queueRead(peer, m) { if (peer === SOS || isGroupChat(peer)) return; (readQ[peer] ||= []).push(m.id); clearTimeout(readQ.t);
   readQ.t = setTimeout(() => { for (const p in readQ) if (p !== 't' && readQ[p].length) { sendSecure(p, { k: 'read', refs: readQ[p] }).catch(() => {}); readQ[p] = []; } }, 400); }
 function saveChats() { saveLater('chats', () => chats); }
 function notify(peer, text) {
   if (active === peer && document.visibilityState === 'visible') return;
-  const name = contacts[peer]?.name || peer; toast(`${name}: ${String(text).slice(0, 80)}`); beep(1);
+  const name = contacts[peer]?.name || (isGroupChat(peer) ? groups[peer.slice(2)]?.name : '') || peer;
+  toast(isGroupChat(peer) ? `${name} · ${String(text).slice(0, 80)}` : `${name}: ${String(text).slice(0, 80)}`); beep(1);
   try { if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible')
     new Notification(name, { body: String(text).slice(0, 120), icon: 'icon.svg', tag: peer }); } catch {}
 }
@@ -733,7 +746,9 @@ function attachLocal(pc, stream) {
 }
 async function getMedia(video) {
   return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true },
-    video: video ? { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } : false });
+    video: video ? (ME.batt && ME.batt.l < 20 && !ME.batt.c
+      ? { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 12 } }     // low battery: lighter video
+      : { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }) : false });
 }
 async function startCall(peer, video) {
   const link = links.get(peer);
@@ -812,6 +827,11 @@ function showCall(state) {
 function setCallState(s) { $('#callState').textContent = s; if (s === 'متصل') { CALL.started = Date.now(); clearInterval(CALL.ring); } }
 
 /* ---------- ledger: signed hash chain + witnesses ---------- */
+async function merkleRoot(hs) {
+  let lvl = hs.length ? hs.slice() : ['0'.repeat(64)];
+  while (lvl.length > 1) { const nx = []; for (let i = 0; i < lvl.length; i += 2) nx.push(await sha(lvl[i] + (lvl[i + 1] ?? lvl[i]))); lvl = nx; }
+  return lvl[0];
+}
 async function logEntry(dir, peer, h) {
   ledger.pending.push({ d: dir, p: peer, h, ts: Date.now() });
   if (ledger.pending.length >= 8) await seal(); else saveLater('ledger', () => ledger);
@@ -822,7 +842,8 @@ async function seal() {
   try {
     const prev = ledger.blocks[ledger.blocks.length - 1];
     const b = { i: prev ? prev.i + 1 : 0, prev: prev ? prev.hash : '0'.repeat(64), ts: Date.now(), by: ME.id, e: ledger.pending.splice(0) };
-    b.hash = await sha(JSON.stringify([b.i, b.prev, b.ts, b.by, b.e]));
+    b.mr = await merkleRoot(b.e.map(x => x.h));
+    b.hash = await sha(JSON.stringify([b.i, b.prev, b.ts, b.by, b.e, b.mr]));
     b.sig = await sign(b.hash);
     ledger.blocks.push(b); await db.set('ledger', ledger);
     announce();
@@ -832,7 +853,8 @@ async function seal() {
 async function verifyLedger() {
   let prev = '0'.repeat(64);
   for (const b of ledger.blocks) {
-    const h = await sha(JSON.stringify([b.i, b.prev, b.ts, b.by, b.e]));
+    if (b.mr && b.mr !== await merkleRoot(b.e.map(x => x.h))) return { ok: false, at: b.i, why: 'جذر Merkle لا يطابق الأحداث' };
+    const h = await sha(JSON.stringify(b.mr ? [b.i, b.prev, b.ts, b.by, b.e, b.mr] : [b.i, b.prev, b.ts, b.by, b.e]));
     if (h !== b.hash || b.prev !== prev) return { ok: false, at: b.i, why: 'البصمة لا تطابق المحتوى أو السلسلة مقطوعة' };
     if (!(await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, ME.vKey, b64d(b.sig), enc.encode(b.hash)))) return { ok: false, at: b.i, why: 'التوقيع غير صالح' };
     prev = b.hash;
@@ -854,6 +876,7 @@ function renderSoon() { clearTimeout(rT); rT = setTimeout(renderAll, 60); }
 function renderMsgSoon(peer) { if (active !== peer) return renderSoon(); clearTimeout(rmT[peer]); rmT[peer] = setTimeout(renderMsgs, 40); }
 function reachOf(id) {
   if (id === SOS) return { cls: 'mesh', text: 'قناة عامة لكل الأجهزة في المدى' };
+  if (isGroupChat(id)) { const g = groups[id.slice(2)]; return { cls: 'mesh', text: g ? `مجموعة · ${g.members.length} أعضاء` : 'مجموعة' }; }
   if (links.has(id)) return { cls: 'direct', text: 'متصل مباشرة' };
   const c = contacts[id];
   const fresh = c && c.hops < 9 && Date.now() - c.seen < (c.via && c.via !== 'ip' ? (window.WaslRadio?.KINDS[c.via]?.cardEvery || 0) * 2.5 : CARD_EVERY * 3.5);
@@ -873,14 +896,14 @@ function lastOf(id) { const l = chats[id] || []; for (let i = l.length - 1; i >=
 function previewOf(m) { if (!m) return ''; if (m.kind === 'file') return (m.mine ? 'أنت: ' : '') + (m.voice ? '🎙 رسالة صوتية' : '📎 ' + m.name);
   return (m.mine ? 'أنت: ' : m.kind === 'sos' ? m.from + ': ' : '') + m.text; }
 function renderList() {
-  const ids = [SOS, ...new Set([...Object.keys(contacts), ...Object.keys(chats).filter(k => k !== SOS)])];
+  const ids = [SOS, ...new Set([...Object.keys(groups).map(GID), ...Object.keys(contacts), ...Object.keys(chats).filter(k => k !== SOS)])];
   ids.sort((a, b) => { if (a === SOS) return -1; if (b === SOS) return 1; return (lastOf(b)?.ts || contacts[b]?.seen || 0) - (lastOf(a)?.ts || contacts[a]?.seen || 0); });
   const el = $('#chatList'); el.innerHTML = '';
   if (!Object.keys(contacts).length) el.insertAdjacentHTML('beforeend', '<p class="empty">لا توجد أجهزة بعد. اضغط «+ جهاز قريب» لربط أول هاتف.</p>');
   for (const id of ids) {
-    if (id !== SOS && !contacts[id]) continue;
+    if (id !== SOS && !contacts[id] && !(isGroupChat(id) && groups[id.slice(2)])) continue;
     const last = lastOf(id), unread = (chats[id] || []).filter(m => m.unread).length, r = reachOf(id);
-    const name = id === SOS ? 'قناة الطوارئ SOS' : contacts[id].name || id;
+    const name = id === SOS ? 'قناة الطوارئ SOS' : isGroupChat(id) ? '👥 ' + groups[id.slice(2)].name : (contacts[id].name || id) + (contacts[id].verified ? ' ✔' : '');
     const b = document.createElement('button'); b.className = 'item' + (id === SOS ? ' sos' : ''); b.dataset.id = id;
     b.setAttribute('aria-current', active === id);
     b.innerHTML = `<div class="avatar" style="background:${id === SOS ? 'var(--sos)' : colorOf(id)}">${id === SOS ? '!' : esc(initial(name))}</div>
@@ -893,7 +916,9 @@ function renderList() {
 }
 function renderHead() {
   const id = active, r = reachOf(id), isSos = id === SOS, c = contacts[id];
-  $('#cName').textContent = isSos ? 'قناة الطوارئ SOS' : (c?.name || id);
+  const isGrp = isGroupChat(id), g = isGrp ? groups[id.slice(2)] : null;
+  $('#cName').textContent = isSos ? 'قناة الطوارئ SOS' : isGrp ? g?.name || 'مجموعة' : (c?.name || id) + (c?.verified ? ' ✔' : '');
+  $('#cName').title = c ? 'اضغط لعرض رقم الأمان' : '';
   $('#cStatus').textContent = isSos ? 'رسائل موقّعة تصل لكل الأجهزة في الشبكة' : `${r.text || ''} · ${id}`;
   $('#cAv').textContent = isSos ? '!' : initial(c?.name); $('#cAv').style.background = isSos ? 'var(--sos)' : colorOf(id);
   const direct = links.has(id) && !links.get(id).native;
@@ -904,6 +929,9 @@ function renderHead() {
   $('#textIn').placeholder = isSos ? 'اكتب نداء الاستغاثة: ماذا حدث وأين أنت' : 'اكتب رسالة';
   $('#sendBtn').hidden = !isSos && !$('#textIn').value.trim();
   $('#micBtn').hidden = isSos || !$('#sendBtn').hidden;
+  if (isGrp) { $('#voiceBtn').hidden = $('#videoBtn').hidden = $('#directBtn').hidden = $('#attachBtn').hidden = $('#micBtn').hidden = true; $('#sendBtn').hidden = false;
+    $('#cStatus').textContent = g ? g.members.map(x => x === ME.id ? 'أنت' : contacts[x]?.name || x).join('، ') : ''; }
+  $('#locBtn').hidden = isSos || isGrp; $('#whistleBtn').hidden = $('#morseBtn').hidden = !isSos;
 }
 const urls = new WeakMap();
 const urlOf = blob => { if (!urls.has(blob)) urls.set(blob, URL.createObjectURL(blob)); return urls.get(blob); };
@@ -926,6 +954,7 @@ function renderMsgs() {
     if (m.kind === 'sys') { b.textContent = m.text; el.append(b); continue; }
     const bt = BT[m.ty || 'SOS'];
     let html = m.kind === 'sos' ? `<span class="from">${bt.e} ${esc(bt.l)}${m.mine ? '' : ' · ' + esc(m.from)}</span>` : '';
+    if (isGroupChat(active) && !m.mine && m.from && m.kind !== 'sos') html += `<span class="from" style="color:${colorOf(m.fromId || '')}">${esc(m.from)}</span>`;
     if (m.kind === 'file') {
       if (m.blob) {
         const u = urlOf(m.blob), t = m.type || '';
@@ -935,9 +964,13 @@ function renderMsgs() {
         else html += `<a class="file" href="${u}" download="${esc(m.name)}">📄<span><b>${esc(m.name)}</b><small>${fmtSize(m.size)} · اضغط للحفظ</small></span></a>`;
       } else html += `<div class="file">📄<span><b>${esc(m.voice ? 'رسالة صوتية' : m.name)}</b><small>${fmtSize(m.size)}</small></span></div>`;
       if (m.progress !== undefined) html += `<div class="prog"><i style="width:${Math.round(m.progress * 100)}%"></i></div>`;
+    } else if (m.kind === 'loc') {
+      const t = { lat: m.lat, lon: m.lon }, db_ = lastPos && !m.mine ? distBearing(lastPos, t) : null;
+      html += `<span>📍 ${m.mine ? 'شاركتَ موقعك' : 'موقع مُشارك'} <small class="mono">${Number(m.lat).toFixed(5)}, ${Number(m.lon).toFixed(5)} ±${Math.round(m.acc || 0)} م</small>${db_ ? `<br>على بعد ${fmtDist(db_.d)}، اتجاه ${Math.round(db_.brg)}°` : ''}</span>${m.mine ? '' : `<button class="ackb" data-compass="${active}">افتح البوصلة</button>`}`;
     } else html += `<span>${esc(m.text)}</span>`;
     if (m.kind === 'sos' && m.bid && ops.bc[m.bid]) { const n = Object.keys(ops.bc[m.bid].acks).length;
       html += m.mine ? `<small>أكّد الاستلام: ${n}</small>` : ops.bc[m.bid].acks[ME.id] ? '<small>أكّدتَ الاستلام ✓</small>' : `<button class="ackb" data-ack="${m.bid}">تم الاستلام</button>`; }
+    if (m.mine && m.total) html += `<small class="hint">وصلت إلى ${(m.dlv || []).length} من ${m.total}</small>`;
     html += `<span class="meta">${m.hops > 1 ? `<span title="عدد الأجهزة التي مرّت عبرها">${m.hops} قفزات</span>` : ''}<span>${fmtTime(m.ts)}</span>${tick(m)}</span>`;
     b.innerHTML = html; el.append(b);
   }
@@ -1096,6 +1129,279 @@ async function importBundle(data) {
   renderSoon(); return n;
 }
 
+/* ---------- merged from نبض Mesh (NEXLINK-FINAL) and NexLink (native) ----------
+ * privacy modes, app lock, safety numbers, group chats, document notarization,
+ * file library, self-diagnostic, battery-aware relay, offline GPS compass, SOS whistle + Morse.
+ * Rebuilt on Wasl's verified identity model (an ID is always the hash of its signing key). */
+let PRIV = { vis: 'public', hideName: false, relay: true, powerSave: true, secure: false, sosLoc: true };
+let groups = {};                                   // gid -> {gid, name, members, by, ts}
+const GID = gid => 'g:' + gid, isGroupChat = id => typeof id === 'string' && id.startsWith('g:');
+const savePriv = () => db.set('privacy', PRIV).catch(() => {});
+const saveGroups = () => saveLater('groups', () => groups);
+function relayAllowed(pkt) {
+  if (pkt.type === 'sos') return true;                                  // emergencies are always relayed
+  if (!PRIV.relay) return false;
+  if (PRIV.powerSave && ME.batt && ME.batt.l < 20 && !ME.batt.c) return false;
+  return true;
+}
+function acceptNewIdentity(id, viaManualPairing) {
+  if (contacts[id] || viaManualPairing) return true;
+  return PRIV.vis === 'public';
+}
+
+/* safety numbers: same 48 digits on both phones, derived from both signing keys */
+async function safetyNumber(peerId) {
+  const c = contacts[peerId]; if (!c) return '';
+  const a = ME.sPub.x + ME.sPub.y, b = c.sPub.x + c.sPub.y;
+  const h = new Uint8Array(await subtle.digest('SHA-512', enc.encode([a, b].sort().join('|'))));
+  let digits = '';
+  for (let i = 0; digits.length < 48; i += 4) digits += String(((h[i] << 24 >>> 0) + (h[i + 1] << 16) + (h[i + 2] << 8) + h[i + 3]) % 100000).padStart(5, '0');
+  return digits.slice(0, 48).match(/.{4}/g);
+}
+async function openSafety(peerId) {
+  if (!contacts[peerId]) return;
+  const groupsOf4 = await safetyNumber(peerId);
+  $('#sfName').textContent = contacts[peerId].name || peerId;
+  $('#sfNum').innerHTML = groupsOf4.map(g => `<span>${g}</span>`).join('');
+  const v = !!contacts[peerId].verified;
+  $('#sfVerify').textContent = v ? 'إلغاء التحقق' : 'تطابق الرقم: علّمه كموثّق';
+  $('#sfVerify').onclick = () => { contacts[peerId].verified = !v; saveLater('contacts', () => contacts); $('#safetyDlg').close(); renderSoon();
+    toast(v ? 'أُلغي التحقق' : 'تم توثيق جهة الاتصال'); };
+  $('#safetyDlg').showModal();
+}
+
+/* group chats: every message is encrypted separately for each member (pairwise), no group key to leak */
+function openGroupDlg() {
+  const cands = Object.values(contacts).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  if (!cands.length) return toast('اربط جهازاً واحداً على الأقل أولاً');
+  $('#gMembers').innerHTML = cands.map(c => `<label class="chk"><input type="checkbox" value="${c.id}"> ${esc(c.name || c.id)}</label>`).join('');
+  $('#gName').value = ''; $('#groupDlg').showModal();
+}
+function createGroup(name, memberIds) {
+  const gid = rid(), g = { gid, name: str(name, 48) || 'مجموعة', members: [...new Set([ME.id, ...memberIds.filter(isId)])].slice(0, 32), by: ME.id, ts: Date.now() };
+  groups[gid] = g; saveGroups();
+  sysMsg(GID(gid), `أُنشئت المجموعة «${g.name}» مع ${g.members.length - 1} أعضاء`);
+  return gid;
+}
+async function sendGroupText(gid, text) {
+  const g = groups[gid]; if (!g) return;
+  const m = { id: rid(), mine: true, kind: 'text', text, ts: Date.now(), status: 'pending', dlv: [], total: g.members.length - 1 };
+  addMsg(GID(gid), m);
+  let n = 0;
+  for (const mem of g.members) {
+    if (mem === ME.id || !contacts[mem]) continue;
+    const r = await sendSecure(mem, { k: 'gtext', gid, gname: g.name, members: g.members, id: m.id, text, ts: m.ts }, m.id + '|' + mem);
+    n += r.n; logEntry('out', mem, await sha(r.ct));
+  }
+  m.status = n ? 'sent' : 'queued'; saveChats(); renderMsgSoon(GID(gid));
+}
+function onGroupText(from, m, hops) {
+  if (!isRid(m.gid) || !Array.isArray(m.members)) return;
+  const members = [...new Set(m.members.filter(isId))].slice(0, 32);
+  if (!members.includes(from) || !members.includes(ME.id)) return;
+  const g = groups[m.gid] || (groups[m.gid] = { gid: m.gid, name: str(m.gname, 48) || 'مجموعة', members, by: from, ts: Date.now() });
+  if (g.members.includes(from)) { g.members = [...new Set([...g.members, ...members])].slice(0, 32); saveGroups(); }
+  addMsg(GID(m.gid), { id: m.id, mine: false, kind: 'text', text: str(m.text, 4000), ts: m.ts, hops, from: contacts[from]?.name || from, fromId: from });
+  ack(from, m.id); notify(GID(m.gid), `${contacts[from]?.name || from}: ${str(m.text, 80)}`);
+}
+function onGroupAck(from, ref) {                 // count per-member receipts for group messages
+  for (const g of Object.values(groups)) {
+    if (!g.members.includes(from)) continue;
+    const msg = findMsg(GID(g.gid), ref);
+    if (msg && msg.mine) { msg.dlv = [...new Set([...(msg.dlv || []), from])]; if (msg.dlv.length >= (msg.total || 1)) msg.status = 'delivered'; saveChats(); renderMsgSoon(GID(g.gid)); return true; }
+  }
+  return false;
+}
+
+/* document notarization: signed SHA-256 certificate + ledger entry */
+async function notarize(file, title) {
+  const h = await sha(await file.arrayBuffer());
+  const body = JSON.stringify({ v: 1, kind: 'wasl-notary', title: str(title, 80) || file.name, file: file.name, size: file.size, h, ts: Date.now(), by: ME.id, name: ME.name, pk: ME.sPub });
+  const cert = JSON.stringify({ body, sig: await sign(body) });
+  await logEntry('notary', 'self', h); await seal();
+  return { cert, h };
+}
+async function verifyCert(text, file) {
+  let o, b; try { o = JSON.parse(text); b = JSON.parse(o.body); } catch { return { ok: false, why: 'ليس نص شهادة صالحاً' }; }
+  if (b.kind !== 'wasl-notary') return { ok: false, why: 'ليست شهادة توثيق من وَصْل' };
+  if ((await fpOf(b.pk)) !== b.by) return { ok: false, why: 'المفتاح لا يطابق هوية الموقّع' };
+  if (!(await verifyWith(b.pk, o.body, o.sig))) return { ok: false, why: 'التوقيع غير صالح: الشهادة معدّلة' };
+  if (file) { const h = await sha(await file.arrayBuffer()); if (h !== b.h) return { ok: false, why: 'الملف لا يطابق الشهادة: محتواه تغيّر', b }; }
+  return { ok: true, b, fileChecked: !!file };
+}
+
+/* self-diagnostic, run before every field test */
+async function selfTest() {
+  const out = [], t = async (name, fn) => { const t0 = performance.now(); try { const r = await fn(); out.push({ name, ok: r !== false, note: typeof r === 'string' ? r : '', ms: Math.round(performance.now() - t0) }); } catch (e) { out.push({ name, ok: false, note: String(e.message || e), ms: Math.round(performance.now() - t0) }); } };
+  await t('التوقيع والتحقق (ECDSA P-256)', async () => verifyWith(ME.sPub, 'probe', await sign('probe')));
+  await t('الهوية مشتقة من المفتاح', async () => (await fpOf(ME.sPub)) === ME.id);
+  await t('التشفير وفك التشفير (ECDH + HKDF + AES-GCM)', async () => {
+    const other = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+    const a = await hkdfKey(ME.eKey, other.publicKey, 'probe'), b = await hkdfKey(other.privateKey, await subtle.importKey('jwk', ME.ePub, { name: 'ECDH', namedCurve: 'P-256' }, false, []), 'probe');
+    const iv = crypto.getRandomValues(new Uint8Array(12)), ct = await subtle.encrypt({ name: 'AES-GCM', iv }, a, enc.encode('سلام'));
+    return dec.decode(await subtle.decrypt({ name: 'AES-GCM', iv }, b, ct)) === 'سلام'; });
+  await t('سلامة السجل المتسلسل', async () => { const v = await verifyLedger(); return v.ok ? `${ledger.blocks.length} كتلة` : false; });
+  await t('التخزين على الجهاز', async () => { await db.set('probe', 1); return (await db.get('probe')) === 1; });
+  await t('المودم الصوتي (حلقة داخلية)', async () => { const d = crypto.getRandomValues(new Uint8Array(32)), R = window.WaslRadio;
+    const r = R.demodulate(R.modulate(d, 48000, R.PROFILES.vhf), 48000, R.PROFILES.vhf); return r.frames.length === 1 && r.frames[0].every((x, i) => x === d[i]); });
+  await t('الطبقات', async () => `${links.size} روابط مباشرة · أصلي: ${NATIVE.on ? 'يعمل' : 'غير متاح'} · راديو: ${[...radios.values()].filter(p => p.state === 'on').map(p => VIA[p.kind]).join('، ') || 'لا يوجد'}`);
+  await t('الموقع (GPS)', async () => { const p = await getPos(4000); return p ? `±${Math.round(p.acc)} م` : 'غير متاح أو لم يُمنح الإذن'; });
+  return out;
+}
+
+/* offline GPS: share location with a contact, compass towards them */
+let lastPos = null;
+function getPos(timeout = 8000) {
+  return new Promise(res => { if (!navigator.geolocation) return res(null);
+    navigator.geolocation.getCurrentPosition(p => { lastPos = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, ts: Date.now() }; res(lastPos); },
+      () => res(null), { enableHighAccuracy: true, timeout, maximumAge: 60000 }); });
+}
+const rad = d => d * Math.PI / 180;
+function distBearing(a, b) {
+  const R = 6371000, dLat = rad(b.lat - a.lat), dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  const d = 2 * R * Math.asin(Math.sqrt(h));
+  const y = Math.sin(dLon) * Math.cos(rad(b.lat)), x = Math.cos(rad(a.lat)) * Math.sin(rad(b.lat)) - Math.sin(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.cos(dLon);
+  return { d, brg: (Math.atan2(y, x) * 180 / Math.PI + 360) % 360 };
+}
+const fmtDist = d => d < 1000 ? `${Math.round(d)} م` : `${(d / 1000).toFixed(d < 10000 ? 1 : 0)} كم`;
+async function shareLocation(peer) {
+  const p = await getPos(); if (!p) return toast('تعذّر تحديد الموقع. فعّل GPS وامنح الإذن. لا يحتاج إنترنت.');
+  const m = { id: rid(), mine: true, kind: 'loc', lat: p.lat, lon: p.lon, acc: p.acc, ts: Date.now(), status: 'pending' };
+  addMsg(peer, m);
+  const r = await sendSecure(peer, { k: 'loc', id: m.id, lat: p.lat, lon: p.lon, acc: p.acc, ts: m.ts }, m.id);
+  m.status = r.n ? 'sent' : 'queued'; saveChats(); renderMsgSoon(peer);
+}
+function onLocation(from, m, hops) {
+  const lat = Number(m.lat), lon = Number(m.lon), acc = Number(m.acc);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
+  contacts[from].loc = { lat, lon, acc: Number.isFinite(acc) ? acc : 0, ts: m.ts }; saveLater('contacts', () => contacts);
+  addMsg(from, { id: m.id, mine: false, kind: 'loc', lat, lon, acc, ts: m.ts, hops }); ack(from, m.id);
+}
+let compassPeer = null, heading = null;
+function onOrient(e) { const hdg = e.webkitCompassHeading ?? (e.absolute && e.alpha != null ? 360 - e.alpha : null); if (hdg != null) { heading = hdg; drawCompass(); } }
+async function openCompass(peer) {
+  compassPeer = peer;
+  try { if (typeof DeviceOrientationEvent?.requestPermission === 'function') await DeviceOrientationEvent.requestPermission(); } catch {}
+  window.addEventListener('deviceorientationabsolute', onOrient); window.addEventListener('deviceorientation', onOrient);
+  $('#compassDlg').showModal(); await getPos(); drawCompass();
+}
+function drawCompass() {
+  if (!compassPeer || !$('#compassDlg').open) return;
+  const t = contacts[compassPeer]?.loc;
+  if (!t || !lastPos) { $('#cmpInfo').textContent = !t ? 'لا يوجد موقع مُشارك من هذا الشخص بعد' : 'جارٍ تحديد موقعك…'; return; }
+  const { d, brg } = distBearing(lastPos, t), rot = heading == null ? brg : brg - heading;
+  $('#cmpArrow').style.transform = `rotate(${rot}deg)`;
+  $('#cmpInfo').textContent = `${contacts[compassPeer].name || compassPeer}: ${fmtDist(d)} · اتجاه ${Math.round(brg)}° ${heading == null ? '(البوصلة غير متاحة: الاتجاه من الشمال)' : ''} · آخر تحديث ${fmtTime(t.ts)}`;
+}
+
+/* SOS whistle (880/1320 Hz) and Morse SOS on screen + camera torch */
+let whistle = null, morse = null;
+function toggleWhistle() {
+  if (whistle) { whistle.stop(); whistle = null; $('#whistleBtn')?.setAttribute('aria-pressed', 'false'); return; }
+  actx ||= new AudioContext(); const o = actx.createOscillator(), g = actx.createGain(); g.gain.value = 0.9; o.connect(g).connect(actx.destination);
+  const iv = setInterval(() => { o.frequency.setValueAtTime(o.frequency.value === 880 ? 1320 : 880, actx.currentTime); }, 250);
+  o.frequency.value = 880; o.start(); whistle = { stop: () => { clearInterval(iv); o.stop(); } };
+  $('#whistleBtn')?.setAttribute('aria-pressed', 'true');
+}
+async function toggleMorse() {
+  if (morse) { morse.stop(); morse = null; return; }
+  const ov = document.createElement('div'); ov.id = 'morseOv'; ov.innerHTML = '<span>اضغط للإيقاف</span>'; document.body.append(ov);
+  let torch = null; try { const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); torch = s.getVideoTracks()[0];
+    if (!torch.getCapabilities?.().torch) { torch.stop(); torch = null; } } catch {}
+  const U = 200, seq = [1, 1, 1, 0, 3, 3, 3, 0, 1, 1, 1, 0, 0];            // · · ·   — — —   · · ·
+  let alive = true, i = 0;
+  const set = on => { ov.classList.toggle('on', on); torch?.applyConstraints({ advanced: [{ torch: on }] }).catch(() => {}); };
+  (async () => { while (alive) { const s = seq[i++ % seq.length]; if (s) { set(true); await sleep(s * U); set(false); await sleep(U); } else await sleep(3 * U); } })();
+  morse = { stop: () => { alive = false; set(false); torch?.stop(); ov.remove(); } };
+  ov.onclick = () => { morse?.stop(); morse = null; };
+}
+
+/* app lock (PIN, PBKDF2-SHA256 210k) and screenshot prevention */
+async function pinHash(pin, salt) {
+  const k = await subtle.importKey('raw', enc.encode(pin), 'PBKDF2', false, ['deriveBits']);
+  return b64e(await subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 210000 }, k, 256));
+}
+async function setPin(pin) {
+  if (!/^\d{4,8}$/.test(pin)) return toast('الرمز من 4 إلى 8 أرقام');
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  await db.set('lock', { salt: b64e(salt), hash: await pinHash(pin, salt), fails: 0 }); toast('فُعّل قفل التطبيق'); renderSec();
+}
+let lockedAt = 0;
+async function showLock() {
+  const L = await db.get('lock'); if (!L) return false;
+  $('#lockOv').hidden = false; $('#pinIn').value = ''; $('#pinMsg').textContent = ''; setTimeout(() => $('#pinIn').focus(), 50);
+  return true;
+}
+async function tryUnlock() {
+  const L = await db.get('lock'); if (!L) { $('#lockOv').hidden = true; return; }
+  if (L.until && Date.now() < L.until) { $('#pinMsg').textContent = `محاولات كثيرة. انتظر ${Math.ceil((L.until - Date.now()) / 1000)} ثانية`; return; }
+  if ((await pinHash($('#pinIn').value, b64d(L.salt))) === L.hash) { L.fails = 0; L.until = 0; await db.set('lock', L); $('#lockOv').hidden = true; return; }
+  L.fails = (L.fails || 0) + 1; if (L.fails >= 5) { L.until = Date.now() + 30000 * 2 ** Math.min(6, L.fails - 5); }
+  await db.set('lock', L); $('#pinIn').value = ''; $('#pinMsg').textContent = 'رمز غير صحيح';
+}
+function applySecure() { try { NATIVE.plugin?.setSecureScreen?.({ on: !!PRIV.secure }).catch(() => {}); } catch {} }
+
+/* security & tools tab */
+async function renderSec() {
+  document.querySelectorAll('input[name="vis"]').forEach(r => r.checked = r.value === PRIV.vis);
+  $('#pHideName').checked = PRIV.hideName; $('#pRelay').checked = PRIV.relay; $('#pPower').checked = PRIV.powerSave; $('#pSecure').checked = PRIV.secure;
+  const L = await db.get('lock');
+  $('#lockState').textContent = L ? 'القفل مفعّل: يُطلب الرمز عند فتح التطبيق وبعد دقيقتين في الخلفية.' : 'القفل غير مفعّل.';
+  $('#pinOff').hidden = !L;
+  renderLib();
+}
+function renderLib() {
+  const q = ($('#libQ').value || '').trim().toLowerCase(), rows = [];
+  for (const [peer, list] of Object.entries(chats)) for (const m of list) if (m.kind === 'file' && m.blob) rows.push({ peer, m });
+  rows.sort((a, b) => b.m.ts - a.m.ts);
+  const hit = rows.filter(({ m }) => !q || (m.name || '').toLowerCase().includes(q) || (m.h || '').includes(q));
+  $('#libList').innerHTML = hit.slice(0, 100).map(({ peer, m }) => `<a class="file" href="${urlOf(m.blob)}" download="${esc(m.name)}">📄<span><b>${esc(m.voice ? 'رسالة صوتية' : m.name)}</b>
+    <small>${fmtSize(m.size)} · ${m.mine ? 'أرسلتَه' : 'من ' + esc(contacts[peer]?.name || peer)} · ${fmtTime(m.ts)}${m.h ? ` · <span class="mono">${m.h.slice(0, 12)}…</span>` : ''}</small></span></a>`).join('')
+    || `<p class="hint">${rows.length ? 'لا نتائج' : 'لا توجد ملفات بعد'}</p>`;
+}
+function wireMerged() {
+  $('#newGroupBtn').onclick = openGroupDlg;
+  $('#groupForm').addEventListener('submit', e => {
+    if (e.submitter?.value !== 'ok') return;
+    const ids = [...document.querySelectorAll('#gMembers input:checked')].map(i => i.value);
+    if (!ids.length) { e.preventDefault(); return toast('اختر عضواً واحداً على الأقل'); }
+    openChat(GID(createGroup($('#gName').value, ids)));
+  });
+  $('#cName').addEventListener('click', () => { if (active && contacts[active]) openSafety(active); });
+  $('#sfClose').onclick = () => $('#safetyDlg').close();
+  document.querySelectorAll('input[name="vis"]').forEach(r => r.onchange = () => { PRIV.vis = r.value; savePriv(); toast(r.parentElement.querySelector('b').textContent); if (PRIV.vis !== 'stealth') announce(); });
+  for (const [id, k] of [['pHideName', 'hideName'], ['pRelay', 'relay'], ['pPower', 'powerSave'], ['pSecure', 'secure']])
+    $('#' + id).onchange = e => { PRIV[k] = e.target.checked; savePriv(); if (k === 'secure') applySecure(); if (k === 'hideName') announce(); };
+  $('#pinSet').onclick = () => { setPin($('#pinNew').value.trim()); $('#pinNew').value = ''; };
+  $('#pinOff').onclick = async () => { await db.set('lock', null); toast('أُلغي القفل'); renderSec(); };
+  $('#pinGo').onclick = tryUnlock; $('#pinIn').onkeydown = e => { if (e.key === 'Enter') tryUnlock(); };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') lockedAt = Date.now(); else if (lockedAt && Date.now() - lockedAt > 120000) showLock(); });
+  $('#notFileBtn').onclick = () => $('#notFile').click();
+  $('#notFile').onchange = async () => { const f = $('#notFile').files[0]; $('#notFile').value = ''; if (!f) return;
+    const { cert, h } = await notarize(f, $('#notTitle').value.trim());
+    $('#notOut').innerHTML = `<div class="res good"><b>وُثّق «${esc($('#notTitle').value.trim() || f.name)}»</b><br>البصمة: <span class="mono">${h.slice(0, 24)}…</span> · سُجّلت في سجلّك المتسلسل<code>${esc(cert)}</code>
+      <div class="row2"><button class="btn" id="certCopy">نسخ الشهادة</button><button class="btn" id="certSave">حفظ كملف</button></div></div>`;
+    $('#certCopy').onclick = async () => { try { await navigator.clipboard.writeText(cert); toast('نُسخت الشهادة'); } catch { toast('انسخ النص يدوياً'); } };
+    $('#certSave').onclick = async () => { const name = `wasl-cert-${h.slice(0, 8)}.json`, bytes = enc.encode(cert);
+      if (NATIVE.plugin?.saveFile) { try { await NATIVE.plugin.saveFile({ name, data: toStdB64(bytes) }); toast('حُفظت الشهادة'); } catch {} }
+      else { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes])); a.download = name; a.click(); } };
+    $('#notTitle').value = ''; };
+  let verFile = null;
+  $('#verFileBtn').onclick = () => $('#verFile').click();
+  $('#verFile').onchange = () => { verFile = $('#verFile').files[0] || null; $('#verFileBtn').textContent = verFile ? `الملف: ${verFile.name}` : 'إرفاق الملف الأصلي (اختياري)'; };
+  $('#verGo').onclick = async () => { const r = await verifyCert($('#verCert').value.trim(), verFile);
+    $('#verOut').innerHTML = r.ok ? `<div class="res good"><b>شهادة صحيحة ✓</b><br>«${esc(r.b.title)}» وقّعها ${esc(r.b.name || r.b.by)} (<span class="mono">${r.b.by}</span>) في ${new Date(r.b.ts).toLocaleString('ar')}${r.fileChecked ? '<br>الملف المرفق يطابق الشهادة ✓' : '<br>لم يُرفق الملف الأصلي: التوقيع وحده تحقق منه'}</div>`
+      : `<div class="res bad"><b>غير صالحة ✗</b><br>${esc(r.why)}</div>`; };
+  $('#libQ').oninput = renderLib;
+  $('#diagGo').onclick = async () => { $('#diagOut').innerHTML = '<p class="hint">جارٍ الفحص…</p>'; const r = await selfTest();
+    $('#diagOut').innerHTML = r.map(x => `<div class="res ${x.ok ? 'good' : 'bad'}">${x.ok ? '✓' : '✗'} <b>${esc(x.name)}</b> <small class="hint">${x.ms} ms${x.note ? ' · ' + esc(x.note) : ''}</small></div>`).join(''); };
+  $('#locBtn').onclick = () => active && shareLocation(active);
+  $('#whistleBtn').onclick = toggleWhistle; $('#morseBtn').onclick = toggleMorse;
+  $('#cmpClose').onclick = () => { $('#compassDlg').close(); compassPeer = null; window.removeEventListener('deviceorientationabsolute', onOrient); window.removeEventListener('deviceorientation', onOrient); };
+  $('#msgs').addEventListener('click', e => { const b = e.target.closest('[data-compass]'); if (b) openCompass(b.dataset.compass); });
+}
+
 /* ---------- pairing UI ---------- */
 let pairing = null, scanStream = null, scanTimer = null;
 function qrSvg(text) { const q = qrcode(0, 'L'); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 3, margin: 2, scalable: true }); }
@@ -1176,16 +1482,17 @@ function wire() {
   $('#shareBtn').onclick = async () => { try { await navigator.share({ text: $('#pairOut').value }); } catch {} };
   document.querySelectorAll('.views button').forEach(b => b.onclick = () => {
     document.querySelectorAll('.views button').forEach(x => x.setAttribute('aria-selected', x === b));
-    $('#vChats').hidden = b.dataset.v !== 'chats'; $('#vNet').hidden = b.dataset.v !== 'net'; $('#vChain').hidden = b.dataset.v !== 'chain'; $('#vOps').hidden = b.dataset.v !== 'ops';
+    $('#vChats').hidden = b.dataset.v !== 'chats'; $('#vNet').hidden = b.dataset.v !== 'net'; $('#vChain').hidden = b.dataset.v !== 'chain'; $('#vOps').hidden = b.dataset.v !== 'ops'; $('#vSec').hidden = b.dataset.v !== 'sec';
+    if (b.dataset.v === 'sec') renderSec();
     if (b.dataset.v === 'ops') openOps();
     if (b.dataset.v === 'net') renderNet(); if (b.dataset.v === 'chain') renderChain();
   });
   $('#backBtn').onclick = () => { active = null; $('#app').classList.remove('in-chat'); renderList(); };
   $('#textIn').oninput = () => renderHead();
   $('#composer').onsubmit = e => { e.preventDefault(); const t = $('#textIn').value.trim(); if (!t || !active) return;
-    $('#textIn').value = ''; renderHead(); if (active === SOS) sendSOS(t, $('#bcType').value); else sendText(active, t); };
+    $('#textIn').value = ''; renderHead(); if (active === SOS) sendSOS(t, $('#bcType').value); else if (isGroupChat(active)) sendGroupText(active.slice(2), t); else sendText(active, t); };
   $('#msgs').addEventListener('click', e => { const b = e.target.closest('[data-ack]'); if (b) { b.disabled = true; ackBroadcast(b.dataset.ack); } });
-  wireOps();
+  wireOps(); wireMerged();
   $('#netView').addEventListener('click', e => { const b = e.target.closest('[data-radio]'); if (!b) return;
     const act = b.dataset.radio;
     if (act === 'ipconnect') return connectIpSite(FORM.ipHost);
@@ -1230,20 +1537,22 @@ async function boot() {
   for (const [k, v] of (await db.get('outbox')) || []) outbox.set(k, v);
   ledger = (await db.get('ledger')) || ledger; witness = (await db.get('witness')) || {};
   ops = { bc: {}, props: {}, psigs: {}, tbs: {}, ...((await db.get('ops')) || {}) };
+  PRIV = { ...PRIV, ...((await db.get('privacy')) || {}) }; groups = (await db.get('groups')) || {};
   try { const b = await navigator.getBattery?.(); if (b) { const u = () => ME.batt = { l: Math.round(b.level * 100), c: b.charging };
     u(); b.onlevelchange = b.onchargingchange = u; } } catch {}
   for (const c of Object.values(contacts)) c.hops = 9;
   for (const l of Object.values(chats)) for (const m of l) { if (m.progress !== undefined && !m.blob) m.progress = undefined; if (m.status === 'pending') m.status = 'queued'; }
-  wire(); renderMe(); renderAll();
+  wire(); renderMe(); renderAll(); await showLock();
   if (fresh) { $('#newId').textContent = ME.id; $('#nameDlg').showModal(); }
   setInterval(announce, CARD_EVERY);
   setInterval(() => { if (ledger.pending.length) seal(); }, 30000);
   setInterval(renderSoon, 10000);
   setInterval(checkTimers, 15000);
   if ('serviceWorker' in navigator && !window.Capacitor?.isNativePlatform?.()) navigator.serviceWorker.register('sw.js').catch(() => {});
-  startNative();
+  startNative().then(applySecure);
   window.WASL = { ME, contacts, links, chats, stats, ledger: () => ledger, verifyLedger, seal, connectDirect,
-    ops: () => ops, radios, NATIVE, exportBundle, importBundle, outbox, attachRadio, sendFile, startCall,
+    ops: () => ops, radios, NATIVE, PRIV: () => PRIV, setPriv: o => Object.assign(PRIV, o), groups: () => groups, createGroup, sendGroupText,
+    notarize, verifyCert, selfTest, safetyNumber, setPin, shareLocation, distBearing, contactsRef: () => contacts, exportBundle, importBundle, outbox, attachRadio, sendFile, startCall,
     setCallsign: cs => { ME.callsign = cs; },
     virtualRadio: (kind, opts) => attachRadio(Object.assign(new WaslRadio.VirtualPort(kind, opts), {})), sendSOS, ackBroadcast, createProposal, signProposal, armTimer, disarmTimer, checkTimers, health };  // debug/testing hook
 }

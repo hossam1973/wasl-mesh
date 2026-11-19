@@ -34,8 +34,12 @@
 	<string>لمكالمات الفيديو ومسح رمز الربط مع الأجهزة القريبة.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>للاتصال بالأجهزة القريبة مباشرة دون إنترنت.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>لمشاركة موقعك مع من تختار، وإرفاقه بنداء الاستغاثة، وإظهار البوصلة نحو أفراد عائلتك. يعمل بنظام GPS دون إنترنت.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>للمكالمات الصوتية والرسائل الصوتية ومودم الراديو.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>لعرض اتجاه البوصلة نحو جهات اتصالك.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

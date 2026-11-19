@@ -2,6 +2,9 @@ package com.wasl.nearby;
 
 import android.Manifest;
 import android.content.ContentValues;
+import android.content.Intent;
+import android.view.WindowManager;
+import androidx.core.content.ContextCompat;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -136,6 +139,17 @@ public class WaslNearbyPlugin extends Plugin {
     @PluginMethod
     public void kissClose(PluginCall call) { String id = call.getString("id"); if (id != null) ip().kissClose(id); call.resolve(); }
 
+    /** Block screenshots and screen recording of the app (FLAG_SECURE). */
+    @PluginMethod
+    public void setSecureScreen(PluginCall call) {
+        final boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        getActivity().runOnUiThread(() -> {
+            if (on) getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            else getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+            call.resolve();
+        });
+    }
+
     /** Save a file to Downloads (manual carrier bundles on USB / SD card). */
     @PluginMethod
     public void saveFile(PluginCall call) {
@@ -202,6 +216,8 @@ public class WaslNearbyPlugin extends Plugin {
             .addOnFailureListener(e -> emitError("advertise", e.getMessage()));
         client.startDiscovery(SERVICE_ID, discovery, dop)
             .addOnFailureListener(e -> emitError("discover", e.getMessage()));
+        try { ContextCompat.startForegroundService(getContext(), new Intent(getContext(), MeshForegroundService.class)); }
+        catch (Exception e) { emitError("background", e.getMessage()); }
         call.resolve();
     }
 
@@ -225,6 +241,7 @@ public class WaslNearbyPlugin extends Plugin {
     public void stop(PluginCall call) {
         if (client != null) { client.stopAdvertising(); client.stopDiscovery(); client.stopAllEndpoints(); }
         if (ip != null) ip.stop();
+        getContext().stopService(new Intent(getContext(), MeshForegroundService.class));
         connected.clear(); running = false;
         call.resolve();
     }

@@ -198,6 +198,32 @@ th{color:var(--muted);font-weight:600;font-size:.76rem}
 .layer .row{display:flex;gap:6px;flex-wrap:wrap}
 .cap{display:inline-block;background:var(--surface-2);border-radius:6px;padding:0 7px;margin-inline-end:4px;font-size:.74rem}
 .tylbl{font-size:.75rem;font-weight:700}
+.list-tools{display:flex;justify-content:flex-end;padding:8px 14px;border-bottom:1px solid var(--line)}
+.opts{display:flex;flex-direction:column;gap:6px}
+.opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;padding:8px 10px;cursor:pointer}
+.opt:has(input:checked){border-color:var(--accent);background:var(--surface-2)}
+.opt span{display:flex;flex-direction:column}
+.opt small{color:var(--muted);font-size:.78rem}
+.chk2{display:flex;gap:8px;align-items:center;font-size:.86rem}
+.row2{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.row2 input[type=text],.row2 input[type=password],#libQ,#verCert{flex:1;min-width:140px;border:1px solid var(--line);background:var(--surface-2);border-radius:9px;padding:8px 10px;width:100%}
+#verCert{min-height:70px;font-family:var(--mono);font-size:.72rem;direction:ltr}
+.res{border-radius:9px;padding:8px 10px;font-size:.84rem;border:1px solid var(--line)}
+.res.good{border-color:var(--ok)} .res.bad{border-color:var(--sos);background:var(--sos-soft)}
+.res code{display:block;word-break:break-all;font-size:.7rem;color:var(--muted);direction:ltr;text-align:left}
+#lockOv{position:fixed;inset:0;z-index:80;background:var(--bg);display:grid;place-items:center;padding:24px}
+.lockbox{display:flex;flex-direction:column;gap:12px;width:min(320px,100%);text-align:center}
+.lockbox h2{margin:0}
+.lockbox input{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px;font-size:1.4rem;text-align:center;letter-spacing:.3em}
+.safety{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:1.05rem;text-align:center;background:var(--surface-2);border-radius:12px;padding:12px;direction:ltr}
+.vbadge{color:var(--ok);font-weight:700;margin-inline-start:4px}
+.who b{cursor:pointer}
+.compass{position:relative;width:200px;height:200px;border-radius:50%;border:3px solid var(--line);display:grid;place-items:center;background:var(--surface-2)}
+.compass .needle{font-size:4rem;color:var(--sos);line-height:1;transition:transform .3s}
+.compass .n{position:absolute;top:6px;font-weight:700;color:var(--muted)}
+#morseOv{position:fixed;inset:0;z-index:90;background:#000;display:grid;place-items:end center;padding-bottom:40px;color:#888}
+#morseOv.on{background:#fff}
+#whistleBtn[aria-pressed="true"]{outline:3px solid var(--sos)}
 @media (prefers-reduced-motion: reduce){*{animation:none!important}}
 </style>
 </head>
@@ -226,11 +252,44 @@ th{color:var(--muted);font-weight:600;font-size:.76rem}
       <button role="tab" data-v="net" aria-selected="false">الشبكة</button>
       <button role="tab" data-v="chain" aria-selected="false">السجل</button>
       <button role="tab" data-v="ops" aria-selected="false">القيادة</button>
+      <button role="tab" data-v="sec" aria-selected="false">الأمان</button>
     </nav>
-    <div class="view" id="vChats"><div id="chatList"></div></div>
+    <div class="view" id="vChats"><div class="list-tools"><button class="btn" id="newGroupBtn">+ مجموعة</button></div><div id="chatList"></div></div>
     <div class="view" id="vNet" hidden><div class="net" id="netView"></div></div>
     <div class="view" id="vChain" hidden><div class="chain" id="chainView"></div></div>
     <div class="view" id="vOps" hidden><div class="net" id="opsSide"></div></div>
+    <div class="view" id="vSec" hidden>
+      <div class="net" id="secView">
+        <h3>الخصوصية</h3>
+        <div class="opts" role="radiogroup" aria-label="الظهور في الشبكة">
+          <label class="opt"><input type="radio" name="vis" value="public"><span><b>مرئي للجميع</b><small>الأجهزة القريبة تكتشفك وتتصل بك تلقائياً</small></span></label>
+          <label class="opt"><input type="radio" name="vis" value="contacts"><span><b>جهات الاتصال فقط</b><small>لا يُقبل جهاز جديد إلا بالربط اليدوي برمز QR</small></span></label>
+          <label class="opt"><input type="radio" name="vis" value="stealth"><span><b>وضع التخفي</b><small>لا تعلن هويتك في الشبكة. روابطك الحالية فقط</small></span></label>
+        </div>
+        <label class="chk2"><input type="checkbox" id="pHideName"> إخفاء اسمي في إعلانات الهوية (يظهر المعرّف فقط)</label>
+        <label class="chk2"><input type="checkbox" id="pRelay"> تمرير رسائل الآخرين (أكون حلقة وصل)</label>
+        <label class="chk2"><input type="checkbox" id="pPower"> توفير الطاقة: لا تمرير تحت 20% بطارية، عدا الطوارئ</label>
+        <label class="chk2"><input type="checkbox" id="pSecure"> منع لقطات الشاشة (تطبيق Android)</label>
+        <h3>قفل التطبيق</h3>
+        <p class="hint" id="lockState"></p>
+        <div class="row2"><label for="pinNew" hidden>رمز القفل</label><input type="password" id="pinNew" inputmode="numeric" maxlength="8" autocomplete="new-password" placeholder="رمز من 4 إلى 8 أرقام"><button class="btn primary" id="pinSet">تعيين</button><button class="btn" id="pinOff">إلغاء القفل</button></div>
+        <h3>توثيق المستندات</h3>
+        <p class="hint">يُنشئ شهادة موقّعة بمفتاحك تثبت وجود المستند بمحتواه الحالي في وقت التوثيق (بصمة SHA-256، دون إرسال المستند). مفيد لوثائق الهوية والملكية والتقارير الميدانية.</p>
+        <div class="row2"><label for="notTitle" hidden>وصف المستند</label><input type="text" id="notTitle" maxlength="80" placeholder="وصف المستند، مثلاً: صك ملكية المنزل"><button class="btn primary" id="notFileBtn">اختر ملفاً ووثّقه</button><input type="file" id="notFile" hidden></div>
+        <div id="notOut"></div>
+        <h3>التحقق من شهادة</h3>
+        <label for="verCert" hidden>نص الشهادة</label><textarea id="verCert" placeholder="الصق نص الشهادة هنا"></textarea>
+        <div class="row2"><button class="btn" id="verFileBtn">إرفاق الملف الأصلي (اختياري)</button><input type="file" id="verFile" hidden><button class="btn primary" id="verGo">تحقق</button></div>
+        <div id="verOut"></div>
+        <h3>مكتبة الملفات</h3>
+        <label for="libQ" hidden>بحث</label><input type="text" id="libQ" placeholder="ابحث بالاسم أو ببصمة SHA-256">
+        <div id="libList" class="list"></div>
+        <h3>الفحص الذاتي</h3>
+        <p class="hint">يتحقق من المفاتيح والتشفير والسجل والتخزين والمودم وحالة الطبقات. شغّله قبل كل اختبار ميداني.</p>
+        <button class="btn primary" id="diagGo">شغّل الفحص</button>
+        <div id="diagOut" class="list"></div>
+      </div>
+    </div>
     <footer class="side-foot"><span id="footLinks">0 روابط مباشرة</span><span id="footNodes">0 أجهزة في الشبكة</span><span>الإنترنت: غير مستخدم</span></footer>
   </aside>
 
@@ -252,6 +311,9 @@ th{color:var(--muted);font-weight:600;font-size:.76rem}
         <div class="who"><b id="cName"></b><small id="cStatus"></small></div>
         <div class="acts">
           <button class="btn" id="directBtn" hidden title="أنشئ رابطاً مباشراً عبر الشبكة لتفعيل المكالمات"><svg class="i" style="width:16px;height:16px;vertical-align:-3px"><use href="#i-link"/></svg> اتصال مباشر</button>
+          <button class="icon" id="locBtn" aria-label="مشاركة موقعي" title="مشاركة موقعي (GPS بلا إنترنت)">📍</button>
+          <button class="btn danger" id="whistleBtn" aria-pressed="false" hidden title="صافرة استغاثة 880/1320 Hz">📢 صافرة</button>
+          <button class="btn danger" id="morseBtn" hidden title="وميض SOS بشفرة مورس على الشاشة والفلاش">💡 مورس</button>
           <button class="icon" id="voiceBtn" aria-label="مكالمة صوتية"><svg class="i"><use href="#i-phone"/></svg></button>
           <button class="icon" id="videoBtn" aria-label="مكالمة فيديو"><svg class="i"><use href="#i-video"/></svg></button>
         </div>
@@ -375,6 +437,13 @@ th{color:var(--muted);font-weight:600;font-size:.76rem}
 </div>
 
 <input type="file" id="bundleIn" accept=".wasl,application/octet-stream" hidden>
+<div id="lockOv" hidden><div class="lockbox"><h2>وَصْل مقفل</h2><label for="pinIn" class="hint">أدخل رمز القفل</label><input type="password" id="pinIn" inputmode="numeric" maxlength="8" autocomplete="off"><button class="btn primary" id="pinGo">فتح</button><p class="hint" id="pinMsg"></p></div></div>
+<dialog id="safetyDlg"><div class="dlg"><h2>رقم الأمان</h2><p class="hint">قارن هذا الرقم مع <b id="sfName"></b> وجهاً لوجه أو في مكالمة. إن تطابق الرقمان على الجهازين، فلا يوجد وسيط محتال بينكما.</p><div class="safety mono" id="sfNum"></div><div class="row"><button class="btn primary" id="sfVerify"></button><button class="btn" id="sfClose">إغلاق</button></div></div></dialog>
+<dialog id="groupDlg"><form class="dlg" method="dialog" id="groupForm"><h2>مجموعة جديدة</h2><label for="gName" class="hint">اسم المجموعة</label><input type="text" id="gName" maxlength="48" placeholder="مثلاً: فريق الإسعاف"><span class="hint">الأعضاء (كل رسالة تُشفَّر لكل عضو على حدة)</span><div class="signers" id="gMembers"></div><div class="row"><button class="btn primary" id="gCreate" value="ok">إنشاء</button><button class="btn" value="cancel" formnovalidate>إلغاء</button></div></form></dialog>
+<dialog id="compassDlg"><div class="dlg" style="align-items:center;text-align:center"><h2>البوصلة</h2>
+  <div class="compass"><div class="needle" id="cmpArrow">▲</div><span class="n">N</span></div>
+  <p class="hint" id="cmpInfo"></p><p class="hint">تعمل بنظام GPS والبوصلة في الهاتف، دون إنترنت. أمسك الهاتف أفقياً.</p>
+  <button class="btn" id="cmpClose">إغلاق</button></div></dialog>
 <div id="toast" hidden></div>
 <script src="vendor/qrcode.js"></script>
 <script src="vendor/jsQR.js"></script>

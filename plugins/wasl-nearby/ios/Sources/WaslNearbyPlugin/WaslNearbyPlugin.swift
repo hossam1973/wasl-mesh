@@ -19,7 +19,8 @@ public class WaslNearbyPlugin: CAPPlugin, CAPBridgedPlugin, MCSessionDelegate, M
         CAPPluginMethod(name: "kissConnect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "kissSend", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "kissClose", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setSecureScreen", returnType: CAPPluginReturnPromise)
     ]
 
     private let serviceType = "wasl-mesh"          // must match NSBonjourServices in Info.plist
@@ -77,6 +78,9 @@ public class WaslNearbyPlugin: CAPPlugin, CAPBridgedPlugin, MCSessionDelegate, M
         if let id = call.getString("id") { ip.kissClose(id: id) }
         call.resolve()
     }
+
+    /// iOS offers no public API to block screenshots; report it so the UI can say so.
+    @objc func setSecureScreen(_ call: CAPPluginCall) { call.resolve(["supported": false]) }
 
     /// Hand a bundle file to the share sheet (save to Files, AirDrop, USB drive...).
     @objc func saveFile(_ call: CAPPluginCall) {
