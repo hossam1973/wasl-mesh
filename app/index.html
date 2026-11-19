@@ -336,6 +336,16 @@ th{color:var(--muted);font-weight:600;font-size:.76rem}
         <button class="icon" id="opsBack" aria-label="رجوع"><svg class="i"><use href="#i-back"/></svg></button>
         <div class="who"><b>مركز القيادة الميداني</b><small>يعمل بلا إنترنت · كل الأرقام من الأجهزة في شبكتك الآن</small></div>
       </header>
+      <div class="ops-body" style="flex:0 0 auto;padding-bottom:0" id="opsLock" hidden>
+        <div class="card">
+          <h3>مركز القيادة لخطة المؤسسات</h3>
+          <p class="hint" id="licState"></p>
+          <p>لغرف العمليات وفرق الإنقاذ والمنظمات: صحة الشبكة وخريطتها، جدول الأجهزة والبطاريات، بث الإخلاء والتحذير الرسمي مع تأكيد الاستلام، القرارات بتوقيع متعدد، واسم المنظمة على كل الأجهزة.</p>
+          <p class="hint">الرسائل والمكالمات والمجموعات ونداء الاستغاثة والموقع تبقى مجانية لكل الناس.</p>
+          <div class="inline-form"><label for="licIn" hidden>رمز الترخيص</label><input type="text" id="licIn" class="mono" placeholder="WASL-LIC.…"><button class="btn primary" id="licGo">تفعيل الترخيص</button></div>
+          <div class="inline-form"><button class="btn" id="trialGo">تجربة مجانية 14 يوماً</button></div>
+        </div>
+      </div>
       <div class="ops-body">
         <div class="kpis" id="kpis"></div>
         <div class="card">
@@ -447,6 +457,7 @@ th{color:var(--muted);font-weight:600;font-size:.76rem}
 <div id="toast" hidden></div>
 <script src="vendor/qrcode.js"></script>
 <script src="vendor/jsQR.js"></script>
+<script src="license-key.js"></script>
 <script src="radio.js"></script>
 <script src="app.js"></script>
 </body>

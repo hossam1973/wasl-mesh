@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>مُصدِر تراخيص وَصْل</title>
+<style>
+:root{--bg:#eef2f0;--s:#fff;--l:#cfd8d4;--fg:#13201c;--m:#56655f;--a:#0d7a68;--w:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1210;--s:#131d1a;--l:#26372f;--fg:#e3ece8;--m:#8fa39b;--a:#2fbf9f;--w:#ff6b5e;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:"Segoe UI",Tahoma,system-ui,sans-serif;line-height:1.7;padding:24px max(16px,4vw)}
+main{max-width:760px;margin:auto;display:flex;flex-direction:column;gap:18px}
+h1,h2{margin:0}section{background:var(--s);border:1px solid var(--l);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.warn{border-color:var(--w);color:var(--w)}label{font-size:.9rem;color:var(--m)}
+input,textarea,select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--l);border-radius:8px;padding:8px 10px;width:100%}
+textarea{min-height:90px;font-family:ui-monospace,Consolas,monospace;font-size:.75rem;direction:ltr}
+button{font:inherit;font-weight:700;border:0;border-radius:9px;padding:10px 14px;background:var(--a);color:#fff;cursor:pointer}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1;min-width:160px}
+</style>
+</head>
+<body><main>
+<h1>مُصدِر تراخيص وَصْل للمؤسسات</h1>
+<p>أداة تعمل في متصفحك فقط، دون إنترنت ودون خادم. المفتاح الخاص لا يغادر جهازك.</p>
+<section class="warn"><b>المفتاح الخاص هو مصدر دخلك.</b> من يملكه يستطيع إصدار تراخيص. احفظه على جهاز غير متصل أو في وحدة تخزين مشفّرة، مع نسخة احتياطية. لا ترفعه إلى GitHub أبداً.</section>
+
+<section><h2>1. مفتاح البائع (مرة واحدة)</h2>
+<button id="gen">أنشئ مفتاحاً جديداً</button>
+<label>المفتاح العام: انسخه إلى الملف <code>app/license-key.js</code> في المستودع</label><textarea id="pub" readonly></textarea>
+<label>المفتاح الخاص: احفظه في مكان آمن (أو الصقه هنا عند إصدار التراخيص لاحقاً)</label><textarea id="priv"></textarea>
+<button id="savePriv">حفظ المفتاح الخاص كملف</button>
+</section>
+
+<section><h2>2. إصدار ترخيص</h2>
+<div class="row"><div><label>اسم المنظمة</label><input id="org" placeholder="الدفاع المدني - منطقة الرياض"></div><div><label>عدد الأجهزة</label><input id="seats" type="number" value="25" min="1"></div></div>
+<div class="row"><div><label>المدة</label><select id="months"><option value="1">شهر (تجربة مدفوعة)</option><option value="12" selected>سنة</option><option value="24">سنتان</option><option value="0">دائم</option></select></div><div><label>رقم العقد أو الفاتورة</label><input id="ref" placeholder="INV-2026-014"></div></div>
+<button id="issue">أصدر الترخيص</button>
+<label>رمز الترخيص: أرسله للمنظمة، فتلصقه في «مركز القيادة» على كل جهاز</label><textarea id="out" readonly></textarea>
+</section>
+</main>
+<script>
+const s = crypto.subtle, enc = new TextEncoder();
+const b64u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+document.getElementById('gen').onclick = async () => {
+  const k = await s.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const pub = await s.exportKey('jwk', k.publicKey), priv = await s.exportKey('jwk', k.privateKey);
+  document.getElementById('pub').value = 'window.WASL_VENDOR_KEY = ' + JSON.stringify({ kty: pub.kty, crv: pub.crv, x: pub.x, y: pub.y }) + ';';
+  document.getElementById('priv').value = JSON.stringify(priv);
+};
+document.getElementById('savePriv').onclick = () => { const v = document.getElementById('priv').value; if (!v) return;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([v], { type: 'application/json' })); a.download = 'wasl-vendor-PRIVATE-key.json'; a.click(); };
+document.getElementById('issue').onclick = async () => {
+  try {
+    const jwk = JSON.parse(document.getElementById('priv').value); delete jwk.key_ops;
+    const key = await s.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+    const m = +document.getElementById('months').value, now = Date.now();
+    const body = JSON.stringify({ v: 1, id: crypto.randomUUID().slice(0, 8), org: document.getElementById('org').value.trim(), plan: 'org',
+      seats: +document.getElementById('seats').value || 1, features: ['ops', 'brand'], ref: document.getElementById('ref').value.trim(), iat: now, exp: m ? now + m * 30.44 * 86400000 : 0 });
+    if (!JSON.parse(body).org) throw new Error('اكتب اسم المنظمة');
+    const sig = b64u(await s.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(body)));
+    document.getElementById('out').value = 'WASL-LIC.' + b64u(enc.encode(JSON.stringify({ body, sig })));
+  } catch (e) { document.getElementById('out').value = 'خطأ: ' + (e.message || 'تأكد من لصق المفتاح الخاص'); }
+};
+</script>
+</body></html>

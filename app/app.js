@@ -463,6 +463,7 @@ async function publish(type, obj) {
 /* typed broadcasts */
 async function sendSOS(text, ty = 'SOS') {
   if (!BT[ty]) ty = 'SOS';
+  if ((ty === 'EVAC' || ty === 'WARN') && !hasFeature('ops')) { toast('بث الإخلاء والتحذير الرسمي لخطة المؤسسات. نداء الاستغاثة مجاني دائماً.'); return; }
   if (PRIV.sosLoc && ty === 'SOS') { const p = await getPos(3000); if (p) text += ` · 📍 ${p.lat.toFixed(5)},${p.lon.toFixed(5)} ±${Math.round(p.acc)}م`; }
   const bid = rid(), ts = Date.now();
   const body = JSON.stringify({ id: ME.id, name: ME.name, sPub: ME.sPub, text, ts, ty, bid });
@@ -611,6 +612,42 @@ function drawTopo(h) {
 /* control-centre rendering */
 let roT;
 function renderOpsSoon() { clearTimeout(roT); roT = setTimeout(renderOps, 120); }
+/* ---------- organisation licence (offline-verifiable) ----------
+ * Free for everyone: messaging, calls, groups, SOS, location, radio layers, carrier.
+ * Organisation plan: control centre (network health, fleet, decisions), official EVAC / WARN broadcasts, branding.
+ * A licence is a JSON body signed with the vendor's private key; the app verifies it with the embedded public key, offline. */
+let LIC = null;                                    // verified licence body, or null
+const LIC_PREFIX = 'WASL-LIC.';
+async function verifyLicence(code) {
+  const vk = window.WASL_VENDOR_KEY; if (!vk) return { ok: false, why: 'نظام التراخيص غير مفعّل في هذه النسخة' };
+  let o, b; try { o = JSON.parse(dec.decode(b64d(String(code).trim().replace(LIC_PREFIX, '')))); b = JSON.parse(o.body); } catch { return { ok: false, why: 'رمز الترخيص غير صالح' }; }
+  if (!(await verifyWith(vk, o.body, o.sig))) return { ok: false, why: 'توقيع الترخيص غير صالح' };
+  if (b.v !== 1 || typeof b.org !== 'string') return { ok: false, why: 'صيغة الترخيص غير معروفة' };
+  if (b.exp && Date.now() > b.exp) return { ok: false, why: `انتهى الترخيص في ${new Date(b.exp).toLocaleDateString('ar')}`, b };
+  return { ok: true, b: { org: str(b.org, 60), plan: str(b.plan, 20), seats: int(b.seats, 1, 1e6, 1), features: Array.isArray(b.features) ? b.features.slice(0, 20) : [], exp: b.exp || 0, id: str(b.id, 40) } };
+}
+function hasFeature(f) {
+  if (!window.WASL_VENDOR_KEY) return true;                       // licensing not configured: everything open
+  if (LIC && (!LIC.exp || Date.now() < LIC.exp) && LIC.features.includes(f)) return true;
+  return !!(TRIAL && Date.now() < TRIAL);
+}
+let TRIAL = 0;
+async function applyLicence(code) {
+  const r = await verifyLicence(code);
+  if (!r.ok) { toast(r.why); return r; }
+  LIC = r.b; await db.set('licence', String(code).trim()); toast(`فُعّل ترخيص ${LIC.org}`); renderMe(); renderOps(); renderLicence(); return r;
+}
+async function startTrial() {
+  if (await db.get('trialUsed')) return toast('استُخدمت التجربة المجانية على هذا الجهاز');
+  TRIAL = Date.now() + 14 * 86400000; await db.set('trial', TRIAL); await db.set('trialUsed', true);
+  toast('بدأت تجربة 14 يوماً لخطة المؤسسات'); renderOps(); renderLicence();
+}
+function renderLicence() {
+  const el = $('#licState'); if (!el) return;
+  if (!window.WASL_VENDOR_KEY) { el.textContent = 'كل الميزات مفتوحة في هذه النسخة.'; return; }
+  el.textContent = LIC ? `مرخّص لـ ${LIC.org} · ${LIC.seats} جهاز${LIC.exp ? ' · حتى ' + new Date(LIC.exp).toLocaleDateString('ar') : ''}`
+    : TRIAL && Date.now() < TRIAL ? `تجربة مجانية حتى ${new Date(TRIAL).toLocaleDateString('ar')}` : 'النسخة المجانية: الرسائل والمكالمات والطوارئ كاملة. مركز القيادة للمؤسسات.';
+}
 function openOps() {
   active = null; $('#welcome').hidden = true; $('#chat').hidden = true; $('#ops').hidden = false; $('#app').classList.add('in-chat');
   renderOps(); renderList();
@@ -618,6 +655,10 @@ function openOps() {
 function battHtml(bt) { if (!bt) return '<small class="hint">—</small>';
   return `<span class="batt"><i><u class="${bt.l < 20 ? 'low' : ''}" style="width:${bt.l}%"></u></i>${bt.l}%${bt.c ? ' ⚡' : ''}</span>`; }
 function renderOps() {
+  const locked = !hasFeature('ops');
+  $('#opsLock').hidden = !locked; $('#ops .ops-body:not(#opsLock)').hidden = locked;
+  document.querySelectorAll('#bcType option[value="EVAC"], #bcType option[value="WARN"]').forEach(o => { o.disabled = locked; o.textContent = o.textContent.replace(' (للمؤسسات)', '') + (locked ? ' (للمؤسسات)' : ''); });
+  if (locked) { renderLicence(); $('#opsSide').innerHTML = '<p class="hint">مركز القيادة متاح في خطة المؤسسات.</p><button class="btn primary" id="opsOpen">التفاصيل</button>'; $('#opsOpen').onclick = openOps; return; }
   const h = health();
   const openSig = Object.values(ops.props).filter(p => p.state === 'open' && p.signers.includes(ME.id) && !p.signed.includes(ME.id)).length;
   const fired = Object.values(ops.tbs).filter(t => t.state === 'fired').length;
@@ -668,6 +709,7 @@ function syncTh() {
   sel.innerHTML = Array.from({ length: Math.max(1, n) }, (_, i) => `<option value="${i + 1}" ${i + 1 === Math.min(cur, Math.max(1, n)) ? 'selected' : ''}>${i + 1} من ${n}</option>`).join('');
 }
 function wireOps() {
+  $('#licGo').onclick = () => applyLicence($('#licIn').value); $('#trialGo').onclick = startTrial;
   $('#opsBack').onclick = () => { $('#ops').hidden = true; $('#welcome').hidden = false; $('#app').classList.remove('in-chat'); };
   $('#bcForm').onsubmit = e => { e.preventDefault(); const t = $('#bcFormText').value.trim(); if (!t) return; $('#bcFormText').value = '';
     sendSOS(t, $('#bcFormType').value); toast('أُرسل البث'); };
@@ -1523,7 +1565,7 @@ function wire() {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && active) openChat(active); });
 }
 function renderMe() {
-  $('#meName').textContent = ME.name || 'أنا'; $('#meId').textContent = ME.id;
+  $('#meName').textContent = (ME.name || 'أنا') + (LIC ? ' · ' + LIC.org : ''); $('#meId').textContent = ME.id;
   $('#meAv').textContent = initial(ME.name || 'أ'); $('#meAv').style.background = colorOf(ME.id);
 }
 
@@ -1538,6 +1580,8 @@ async function boot() {
   ledger = (await db.get('ledger')) || ledger; witness = (await db.get('witness')) || {};
   ops = { bc: {}, props: {}, psigs: {}, tbs: {}, ...((await db.get('ops')) || {}) };
   PRIV = { ...PRIV, ...((await db.get('privacy')) || {}) }; groups = (await db.get('groups')) || {};
+  TRIAL = (await db.get('trial')) || 0;
+  { const code = await db.get('licence'); if (code) { const r = await verifyLicence(code); if (r.ok) LIC = r.b; } }
   try { const b = await navigator.getBattery?.(); if (b) { const u = () => ME.batt = { l: Math.round(b.level * 100), c: b.charging };
     u(); b.onlevelchange = b.onchargingchange = u; } } catch {}
   for (const c of Object.values(contacts)) c.hops = 9;
@@ -1551,7 +1595,7 @@ async function boot() {
   if ('serviceWorker' in navigator && !window.Capacitor?.isNativePlatform?.()) navigator.serviceWorker.register('sw.js').catch(() => {});
   startNative().then(applySecure);
   window.WASL = { ME, contacts, links, chats, stats, ledger: () => ledger, verifyLedger, seal, connectDirect,
-    ops: () => ops, radios, NATIVE, PRIV: () => PRIV, setPriv: o => Object.assign(PRIV, o), groups: () => groups, createGroup, sendGroupText,
+    ops: () => ops, radios, NATIVE, applyLicence, verifyLicence, hasFeature, LIC: () => LIC, PRIV: () => PRIV, setPriv: o => Object.assign(PRIV, o), groups: () => groups, createGroup, sendGroupText,
     notarize, verifyCert, selfTest, safetyNumber, setPin, shareLocation, distBearing, contactsRef: () => contacts, exportBundle, importBundle, outbox, attachRadio, sendFile, startCall,
     setCallsign: cs => { ME.callsign = cs; },
     virtualRadio: (kind, opts) => attachRadio(Object.assign(new WaslRadio.VirtualPort(kind, opts), {})), sendSOS, ackBroadcast, createProposal, signProposal, armTimer, disarmTimer, checkTimers, health };  // debug/testing hook
