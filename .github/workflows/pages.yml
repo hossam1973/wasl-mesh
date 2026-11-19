@@ -30,7 +30,8 @@ jobs:
         run: |
           mkdir -p _site
           cp -r app _site/app
-          cp index.html nexlink-review.html field-test-review.html _site/
+          cp index.html demo.html nexlink-review.html field-test-review.html _site/
+          if [ -f CNAME ]; then cp CNAME _site/; fi
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
